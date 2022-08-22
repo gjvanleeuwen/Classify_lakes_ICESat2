@@ -1,0 +1,18 @@
+ICESat-2
+-	Launched on 15 sept 2018
+-	Near polar orbit, ~496 km altitude, 92-degree inclination, 91-day repeat
+-	ground track 90m wide (diff between strong and weak beam), 3km apart (so 3 pairs of 2 beams)
+-	The sole instrument on ICESat-2 is the Advanced Topographic Laser Altimeter System (ATLAS), a space-based lidar. measure 2-way travel time of individual photons
+-	wavelength = 532nm (bright green visual), 6 beams in 3 pairs
+-	Each beam pair is 3.3 km (2.1 mi) apart across the beam track, and each beam in a pair is separated by 2.5 km (1.6 mi) along the beam track. The laser array is rotated 2 degrees from the satellite's ground track so that a beam pair track is separated by about 90 m (300 ft). The laser pulse rate combined with satellite speed results in ATLAS taking an elevation measurement every 70 cm (28 in) (2.3ft) along the satellite's ground path
+-	One data point isn’t sufficient to determine elevation, however. ATLAS will pick up a significant amount of background photons: sunlight in the 532 nanometer range will set off ATLAS’s photon detectors, and particulates or clouds in the air could skew ground data. So computer programs will create "photon cloud" graphs, showing thousands of data points returned by the instrument.
+
+-	Only by applying additional computer programs, which look for the stronger signals in the background clouds, will scientists determine the elevation of the ice, land, water and vegetation below ICESat-2.
+
+ICESat-2’s (Ice, Cloud, and Land
+Elevation Satellite) ATLAS (Advanced Topographic Laser Altimeter System) instrument,
+
+ATL03 produces a photon cloud where each photon
+140 is geolocated to within a 6.5 m accuracy and a footprint size of ~11m (Magruder et al., 2021) with an
+associated height as well as a confidence level [high, medium or low], and is produced at an along-track
+horizontal resolution of 0.7 m.
