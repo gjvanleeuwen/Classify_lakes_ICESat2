@@ -27,7 +27,7 @@ if __name__ == "__main__":
     exploration_dir = 'F:/onderzoeken/thesis_msc/Exploration'
     classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data'
 
-    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*.h5')
+    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*1222*.h5')
     utl.log(track_fn_list, log_level='INFO')
 
     example_lakes = {'ID': [0, 1, 2, 3, 4, 5, 6],
@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
         if save_data:
             utl.log('3. -- saving photon and geo data per beam for classification', log_level='INFO')
-            classification_data = get_classification_data(track_data, along_track_distance_dict, file_info, outdir=classification_dir, overwrite=False) #classification_dir)
+            classification_data = get_classification_data(track_data, along_track_distance_dict, file_info, outdir=classification_dir, overwrite=True) #classification_dir)
 
         # for gtx in sorted(beam_names):
         #

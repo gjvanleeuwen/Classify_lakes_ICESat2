@@ -115,18 +115,20 @@ def plot_lake(dist_along, height_ph, dem_ph, example_lakes, lake_ID, outpath):
     plt.savefig(outpath)
 
 
-def plot_classified_photons(data_df, clusters, out_dir, fn, ph_start, eps, method):
+def plot_classified_photons(data_df, clusters, ph_start, eps, outpath, add_line=False, line_data=None):
     plt.ioff()
     f1, ax1 = plt.subplots(figsize=(20, 20))
     ax1.scatter(data_df['distance'], data_df['height'], c=clusters, cmap='Set2', marker=',',
                 s=0.5)
+    if add_line:
+        ax1.plot(line_data.iloc[:,0], line_data.iloc[:,1])
+
     ax1.set_title('classification gt1l' + "- for photons {} and EPS {}".format(ph_start, eps))
     ax1.get_xaxis().set_tick_params(which='both', direction='in')
     ax1.get_yaxis().set_tick_params(which='both', direction='in')
     ax1.set_xlabel('distance')
     ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
-    plt.savefig(os.path.join(out_dir, 'Exploration/figures/', os.path.basename(fn)[:-4],
-                             'photon_classification_ph_{}_{}.png'.format(ph_start, method)))
+    plt.savefig(outpath)
 
 
 

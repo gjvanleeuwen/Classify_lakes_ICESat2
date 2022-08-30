@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+import pandas as pd
 
 from geopy.distance import geodesic
 
@@ -99,3 +100,18 @@ def min_max_normalize_array(arr):
 
 def reverse_min_max_normalize_array(normalized_arr, arr):
     return (normalized_arr * (np.max(arr) - np.min(arr))) + np.min(arr)
+
+
+def interpolate_df_to_new_index(df_original, df_small, index_col):
+    """Return a new DataFrame with all columns values interpolated
+    to the new_index values."""
+    df_out = pd.DataFrame(index=df_original.index)
+    df_out.index.name = df_original.index.name
+
+    for colname, col in df_small.iteritems():
+        if colname == index_col:
+            df_out[colname] = df_original[index_col]
+        else:
+            df_out[colname] = np.interp(df_original[index_col], df_small[index_col], col)
+
+    return df_out
