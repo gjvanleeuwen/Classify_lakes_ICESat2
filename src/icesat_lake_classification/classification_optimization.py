@@ -116,7 +116,7 @@ def find_optimal_eps(data, min_pts=1, method='max', outpath=None, strict=None):
     index = utl.find_nearest(distance_desc, value_normalized)
     eps = distance_max[index]
 
-    print(eps, value_normalized)
+    # print(eps, value_normalized)
 
     if outpath:
         f1, ax = plt.subplots(figsize=(20, 20))
