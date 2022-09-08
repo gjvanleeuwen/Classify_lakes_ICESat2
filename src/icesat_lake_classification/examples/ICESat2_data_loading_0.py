@@ -1,18 +1,6 @@
-import os
-
-import numpy as np
-import pandas as pd
-
-import matplotlib.pyplot as plt
-from sklearn.cluster import DBSCAN, KMeans, SpectralClustering
-
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
-from icesat_lake_classification.ICESat2_data_management import load_ICESat2_ATL03_data, get_classification_data, get_geo_info_beam, get_cum_along_track_distance
-from icesat_lake_classification.ICESat2_visualization import scatter_plot_map, plot_photon_height, plot_photon_height_single_beam, plot_lake
-
-
-
+from icesat_lake_classification.ICESat2_data_management import load_ICESat2_ATL03_data, get_classification_data, get_cum_along_track_distance
 
 if __name__ == "__main__":
     utl.set_log_level(log_level='INFO')
@@ -27,7 +15,7 @@ if __name__ == "__main__":
     exploration_dir = 'F:/onderzoeken/thesis_msc/Exploration'
     classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data'
 
-    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*1222*.h5')
+    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*12221*.h5')
     utl.log(track_fn_list, log_level='INFO')
 
     for fn in track_fn_list:
