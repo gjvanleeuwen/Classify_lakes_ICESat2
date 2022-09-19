@@ -11,7 +11,8 @@ class path_parser(object):
     """
 
     def __init__(self,
-                 ATL03_fn = False
+                 ATL03_fn = False,
+                 sentinel2_l2a_file = False
                  ):
         """
         Parameters
@@ -19,6 +20,7 @@ class path_parser(object):
         ATL03_fn : bool, indicating whether or not to use the parser for this filetype
         """
         self.ATL03_fn=ATL03_fn
+        self.s2_l2a = sentinel2_l2a_file
 
 
     def ATL03_fn_parser(self, pattern=False):
@@ -30,6 +32,22 @@ class path_parser(object):
 
         p = Parser(template_joined)
         return p
+
+    def sentinel2_l2a_fileformat_parser(self):
+        template_parts_fname = ['T{tile_number:5s}',
+                                '{datetime:%Y%m%dT%H%M%S}',
+                                '{band}',
+                                '{resolution:3s}.{ext:3s}']
+        fname_template = '_'.join(template_parts_fname)
+
+        template_parts_directory = ['{base_dir}','l2a','{tile:5s}','{date}', '{l2a_product_id}',
+                                    'GRANULE', '{l2a_granule_id}',
+                                    'IMG_DATA', 'R{resolution:3s}']
+        directory_template = '/'.join(template_parts_directory)
+        complete_template = os.path.join(directory_template, fname_template)
+        p = Parser(complete_template)
+        return p
+
 
 
     def path_to_dict(self,path):
@@ -171,3 +189,48 @@ def get_curdir():
 
 def get_filename(path):
     return os.path.basename(path)
+
+def get_dirname(path):
+    return os.path.dirname(path)
+
+def get_filname_without_extension(path):
+    return os.path.basename(path).split('.', 1)[0]
+
+def get_file_extension(path):
+    return os.path.basename(path).split('.', 1)[1]
+
+
+def get_sorted_s2_filelist(inputdir, band_list=None, extension='jp2', recursive=False):
+    """
+    Retrieves the raw S2 bands based on input directory sorted by frequency
+
+    Parameters
+    ----------
+    inputdir: string
+        Locations of the inputfiles
+    band_list: list, optional
+        list containing bandname extensions following sentinel naming conventions of bands to be stacked.
+        When supplied, retrieves a custom selection of bands.
+        Not supplied, retrieves complete l2a 20m list.
+    extension : str , optional
+        extension, without dot, to use in the file mask. Default is 'jp2'
+
+    Returns
+    -------
+    band_stack_list: list
+        List of all the bands, sorted by frequency
+
+    """
+    if not band_list:
+        band_list = ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07',
+                     'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
+
+    band_stack_list = []
+
+    for band in band_list:
+        filemask = '*' + band + '*.' + extension
+        band_filename = get_files_from_folder(inputdir, filemask, recursive=recursive)[0]
+
+        band_stack_list.append(band_filename)
+
+    return band_stack_list

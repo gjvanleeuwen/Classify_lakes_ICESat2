@@ -213,3 +213,30 @@ def closestDistanceBetweenLines (a0, a1, b0, b1, clampAll=False, clampA0=False, 
 
     return pA, pB, np.linalg.norm(pA - pB)
 
+import functools
+import time
+
+def timer(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        value = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        run_time = end_time - start_time
+        log("Finished {} in {} secs".format(repr(func.__name__), round(run_time, 3)), log_level='INFO')
+        return value
+
+    return wrapper
+
+import timeit
+
+class codeTimer:
+    def __init__(self, name=None):
+        self.name = " '"  + name + "'" if name else ''
+
+    def __enter__(self):
+        self.start = timeit.default_timer()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.took = (timeit.default_timer() - self.start)
+        log('Code block' + self.name + ' took: ' + str(self.took) + ' seconds', log_level='INFO')

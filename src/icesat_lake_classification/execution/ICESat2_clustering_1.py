@@ -1,19 +1,16 @@
 import os
-import math
 
 import numpy as np
 import pandas as pd
 
 
 import matplotlib.pyplot as plt
-from sklearn.cluster import DBSCAN, OPTICS
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import normalize
+from sklearn.cluster import DBSCAN
 
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
 from icesat_lake_classification.classification_optimization import find_optimal_eps
-from icesat_lake_classification.ICESat2_visualization import plot_classified_photons
+
 
 if __name__ == "__main__":
 
@@ -26,7 +23,7 @@ if __name__ == "__main__":
     lake_dir = os.path.join(figures_dir, 'lake')
 
     classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data'
-    classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt2l*')
+    classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt3l*')
 
     utl.log('processing these files:', log_level='INFO')
     for fn in classification_df_fn_list:
@@ -46,11 +43,12 @@ if __name__ == "__main__":
     # Step 1
     min_pts = 6
     eps_method = 'max'
+    strict_step1 = 1.5
 
     # Step 2
     min_pts_step2 = 3
     eps_method2 = 'max'
-    strict_step2 = 6
+    strict_step2 = 3
 
     if complete_track:
         for fn in classification_df_fn_list:
@@ -75,7 +73,7 @@ if __name__ == "__main__":
                 eps1_outpath = os.path.join(figures_dir,os.path.basename(fn)[:-4],'histogram_EPS_ph_{}_method_{}_minpts_{}.png'.format(
                                                                  ph_start, eps_method, min_pts))
                 eps1 = find_optimal_eps(data_df, min_pts=min_pts, method=eps_method,
-                                        outpath=None, strict=1.5)
+                                        outpath=None, strict=strict_step1)
 
                 clustering = DBSCAN(eps=eps1, min_samples=min_pts).fit(data_df)
                 data_df['clusters'] = np.where(np.array(clustering.labels_) >= 0, 1, 0)  # signal = 1
