@@ -19,6 +19,8 @@ if __name__ == "__main__":
     pd.options.mode.chained_assignment = None  # default='warn'
 
     base_dir = 'F:/onderzoeken/thesis_msc/'
+    write_df = True
+    plot_lakes = False
 
     classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/cluster'
     classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt1l*_class.csv')
@@ -111,61 +113,66 @@ if __name__ == "__main__":
             end_index = len(classification_df) - (100 * len(x))
             classification_df['lake_rolling'] = np.concatenate((np.repeat(mode(x.T)[0],100), np.zeros(end_index))).astype('int')
 
-
-        ### make some graphs
-        utl.log('Make graphs of the calculated mode', log_level='INFO')
-        plt.ioff()
-        ph_per_image = 50000
-        n_ph = len(classification_df)
-
-        if not pth.check_existence(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10])):
-            os.mkdir(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10]))
-
-        start_index_array = np.arange(0, n_ph, ph_per_image)
-        end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
-
-        for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
-
-            if i < 150:
-                continue
-
-            index_slice = slice(ph_start,ph_end)
-            utl.log("Plotting slice {}/{} - Photon count {}".format(int(ph_start/ph_per_image),len(start_index_array), ph_start), log_level='INFO')
-
-            # create dataframe with just 2 variables
-            data_df = classification_df[['distance', 'height', 'clusters', 'bottom_distance', 'bottom_height', 'surface_distance', 'surface_height', 'lake', 'lake_rolling']].iloc[index_slice]
-            # data_df['distance'] = data_df['distance'] - min(data_df['distance'])
-
-            # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
-            cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'dodgerblue', 3: 'wheat', 4: 'red', 5: 'mediumseagreen'}
-            c_cluster = [cluster_map[x] for x in data_df['clusters']]
-
-            f1, ax1 = plt.subplots(figsize=(20, 20))
-            ax1.scatter(data_df['distance'], data_df['height'], c=c_cluster, marker=',',
-                        s=0.5)
-
-            result_map = {1: 'red', 0: 'green', 2: 'orange', 3: 'yellow'}
-            c_bottom = [result_map[x] for x in data_df['lake_rolling']]
-
-            # c = ['red' if a==1 'green' elif a ==2  for a in data_df['lake']]
-            # lines = [((x0, y0), (x1, y1)) for x0, y0, x1, y1 in zip(data_df.loc[:, 'bottom_distance'].iloc[:-1], data_df.loc[:, 'bottom_height'].iloc[:-1], data_df.loc[:, 'bottom_distance'].iloc[1:], data_df.loc[:, 'bottom_height'].iloc[1:])]
-            points = np.array([bottom_df_interp.loc[:, 'distance'].iloc[index_slice], bottom_df_interp.loc[:, 'height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
-            lines = np.concatenate([points[:-1], points[1:]], axis=1)
-            colored_lines = LineCollection(lines, colors=c_bottom, linewidths=(2,))
-            ax1.add_collection(colored_lines)
+        if write_df:
+            utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
+            classification_df.to_csv(os.path.join(classification_dir, 'lake_class', (os.path.basename(fn)[:-4] + '.csv')))
 
 
-            # ax1.plot(data_df.loc[:, 'bottom_distance'], data_df.loc[:, 'bottom_height'])
-            # ax1.plot(data_df.loc[:, 'surface_distance'], data_df.loc[:, 'surface_height'])
-            ax1.plot(df_interp.loc[:, 'distance'].iloc[index_slice], df_interp.loc[:, 'height'].iloc[index_slice])
+        if plot_lakes:
+            ### make some graphs
+            utl.log('Make graphs of the calculated mode', log_level='INFO')
+            plt.ioff()
+            ph_per_image = 50000
+            n_ph = len(classification_df)
 
-            ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
-            ax1.get_xaxis().set_tick_params(which='both', direction='in')
-            ax1.get_yaxis().set_tick_params(which='both', direction='in')
-            ax1.set_xlabel('distance')
-            ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
+            if not pth.check_existence(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10])):
+                os.mkdir(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10]))
 
-            outpath = os.path.join(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10],
-                                   'FINAL_classification_MEAN_ph_{}.png'.format(ph_start)))
-            plt.savefig(outpath)
-            plt.close('all')
+            start_index_array = np.arange(0, n_ph, ph_per_image)
+            end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
+
+            for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
+
+                if i < 150:
+                    continue
+
+                index_slice = slice(ph_start,ph_end)
+                utl.log("Plotting slice {}/{} - Photon count {}".format(int(ph_start/ph_per_image),len(start_index_array), ph_start), log_level='INFO')
+
+                # create dataframe with just 2 variables
+                data_df = classification_df[['distance', 'height', 'clusters', 'bottom_distance', 'bottom_height', 'surface_distance', 'surface_height', 'lake', 'lake_rolling']].iloc[index_slice]
+                # data_df['distance'] = data_df['distance'] - min(data_df['distance'])
+
+                # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
+                cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'dodgerblue', 3: 'wheat', 4: 'red', 5: 'mediumseagreen'}
+                c_cluster = [cluster_map[x] for x in data_df['clusters']]
+
+                f1, ax1 = plt.subplots(figsize=(20, 20))
+                ax1.scatter(data_df['distance'], data_df['height'], c=c_cluster, marker=',',
+                            s=0.5)
+
+                result_map = {1: 'red', 0: 'green', 2: 'orange', 3: 'yellow'}
+                c_bottom = [result_map[x] for x in data_df['lake_rolling']]
+
+                # c = ['red' if a==1 'green' elif a ==2  for a in data_df['lake']]
+                # lines = [((x0, y0), (x1, y1)) for x0, y0, x1, y1 in zip(data_df.loc[:, 'bottom_distance'].iloc[:-1], data_df.loc[:, 'bottom_height'].iloc[:-1], data_df.loc[:, 'bottom_distance'].iloc[1:], data_df.loc[:, 'bottom_height'].iloc[1:])]
+                points = np.array([bottom_df_interp.loc[:, 'distance'].iloc[index_slice], bottom_df_interp.loc[:, 'height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
+                lines = np.concatenate([points[:-1], points[1:]], axis=1)
+                colored_lines = LineCollection(lines, colors=c_bottom, linewidths=(2,))
+                ax1.add_collection(colored_lines)
+
+
+                # ax1.plot(data_df.loc[:, 'bottom_distance'], data_df.loc[:, 'bottom_height'])
+                # ax1.plot(data_df.loc[:, 'surface_distance'], data_df.loc[:, 'surface_height'])
+                ax1.plot(df_interp.loc[:, 'distance'].iloc[index_slice], df_interp.loc[:, 'height'].iloc[index_slice])
+
+                ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
+                ax1.get_xaxis().set_tick_params(which='both', direction='in')
+                ax1.get_yaxis().set_tick_params(which='both', direction='in')
+                ax1.set_xlabel('distance')
+                ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
+
+                outpath = os.path.join(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10],
+                                       'FINAL_classification_MEAN_ph_{}.png'.format(ph_start)))
+                plt.savefig(outpath)
+                plt.close('all')

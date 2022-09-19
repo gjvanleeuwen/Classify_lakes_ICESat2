@@ -2,6 +2,7 @@
 from sentinelsat import SentinelAPI, read_geojson, geojson_to_wkt
 from datetime import date
 import tenacity
+import icesat_lake_classification.utils as utl
 
 @tenacity.retry(stop=tenacity.stop_after_attempt(3), wait=tenacity.wait_fixed(3600))
 def download_all(products, outpath):
@@ -32,4 +33,8 @@ if __name__ == "__main__":
             print('Product {} is not online.'.format(product_id))
 
     downloaded, triggered, failed = download_all(products,outpath=outpath)
+
+    utl.log(downloaded, log_level='INFO')
+    utl.log(triggered, log_level='INFO')
+    utl.log(failed, log_level='INFO')
 
