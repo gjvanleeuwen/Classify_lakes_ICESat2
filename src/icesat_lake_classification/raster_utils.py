@@ -4,6 +4,7 @@ import re
 import shutil
 import tempfile
 import subprocess
+from subprocess import Popen, PIPE
 
 from uuid import uuid4
 from osgeo import gdal
@@ -572,4 +573,34 @@ def calc_index (path_1, path_2,
     return result
 
 
+def gdal_extract_data(input_raster_path, lon, lat):
+    """
+
+    Parameters
+    ----------
+
+    """
+    if sys.platform.startswith('win'):
+        cmd_list = ['type', in_fn, '|', 'C:\ProgramData\Miniconda3\envs\ICESat_lake_classification\python.exe', os.path.join(os.environ['CONDA_PREFIX'], 'gdallocationinfo.py')]
+    else:
+        cmd_list = ['gdallocationinfo.py']
+
+    if not gdal.Open(input_raster_path):
+        raise RuntimeError('Input product dict filename {} does not exist'.format(input_raster_path))
+
+    cmd_list.append('-valonly')
+    cmd_list.append('-wgs84')
+    cmd_list.append("{}".format(input_raster_path))
+    cmd_list.append('{}'.format(lon))
+    cmd_list.append('{}'.format(lat))
+
+
+    p = subprocess.Popen(cmd_list, stdout=subprocess.PIPE)
+    p.wait()
+    val = p.stdout.read()
+
+    try:
+        subprocess.check_call('type ' + in_fn, shell=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError("command '{}' return with error (code {}): {}".format(e.cmd, e.returncode, e.output))
 

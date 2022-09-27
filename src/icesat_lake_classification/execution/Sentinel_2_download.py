@@ -11,6 +11,7 @@ def download_all(products, outpath):
 
 
 if __name__ == "__main__":
+    utl.log("start api login", log_level="INFO")
     api = SentinelAPI('ertyboi', 'Sentinel1!', 'https://scihub.copernicus.eu/dhus')
 
     outpath = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
@@ -18,8 +19,9 @@ if __name__ == "__main__":
 
     # search by polygon, time, and SciHub query keywords
     footprint = geojson_to_wkt(geometry)
+    utl.log("query products", log_level="INFO")
     products = api.query(footprint,
-                         date=('20190619', date(2019, 6, 20)),
+                         date=('20190619', '20190621'),
                          platformname='Sentinel-2',
                          cloudcoverpercentage=(0, 30),
                          producttype='S2MSI2A')
