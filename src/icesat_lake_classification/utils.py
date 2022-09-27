@@ -2,6 +2,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import math
 
 from geopy.distance import geodesic
 
@@ -34,6 +35,13 @@ def log(msg, log_level='DEBUG'):
 
 def find_nearest(array, value):
     return np.abs(array - value).argmin()
+
+def find_nearest_sorted(array,value):
+    idx = np.searchsorted(array, value, side="left")
+    if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
+        return idx -1
+    else:
+        return idx
 
 def get_geodetic_distance(origin, destenation):
     # (latitude, longitude) don't confuse
@@ -240,3 +248,113 @@ class codeTimer:
     def __exit__(self, exc_type, exc_value, traceback):
         self.took = (timeit.default_timer() - self.start)
         log('Code block' + self.name + ' took: ' + str(self.took) + ' seconds', log_level='INFO')
+
+
+def rollBy_per_item(what, basis, window, func):
+    """
+
+    Parameters
+    ----------
+    what : pd.series
+        Pandas series to provide rolling dataset of
+    basis : pd.series
+        Pandas series to use as the index for the rolling. Window units should be in this value
+    window : int
+        window size, automatically forward
+    func : function
+        Sum, mean etc
+
+    Returns
+    -------
+
+    """
+    #note that basis must be sorted in order for this to work properly
+    indexed_what = pd.Series(what.values,index=basis.values)
+
+    def applyToWindow(val):
+        # using slice_indexer rather that what.loc [val:val+window] allows
+        # window limits that are not specifically in the index
+        indexer = indexed_what.index.slice_indexer(val,val+window,1)
+        chunk = indexed_what.index[indexer]
+        return func(chunk)
+
+    rolled = basis.apply(applyToWindow)
+
+    return rolled
+
+
+def rollBy(what, basis, window, func):
+    """
+
+    Parameters
+    ----------
+    what : pd.series
+        Pandas series to provide rolling dataset of
+    basis : pd.series
+        Pandas series to use as the index for the rolling. Window units should be in this value
+        values needs to be sorted
+    window : int
+        window size, automatically forward
+    func : function
+        Sum, mean etc
+
+    Returns
+    -------
+
+    """
+    #note that basis must be sorted in order for this to work properly
+    windows_min = basis.min()
+    windows_max = basis.max()
+    window_starts = np.arange(windows_min, windows_max, window)
+    window_starts = pd.Series(window_starts,index=window_starts)
+    indexed_what = pd.Series(what.values, index=basis.values)
+
+    def applyToWindow(val):
+        # using slice_indexer rather that what.loc [val:val+window] allows
+        # window limits that are not specifically in the index
+        indexer = indexed_what.index.slice_indexer(val, val+window, 1)
+        chunk = indexed_what.iloc[indexer]
+        return func(chunk)
+
+    rolled = window_starts.apply(applyToWindow)
+
+    return rolled
+
+
+def rollBy_mode(what, basis, window, func):
+    """
+
+    Parameters
+    ----------
+    what : pd.series
+        Pandas series to provide rolling dataset of
+    basis : pd.series
+        Pandas series to use as the index for the rolling. Window units should be in this value
+        values needs to be sorted
+    window : int
+        window size, automatically forward
+    func : function
+        Sum, mean etc
+
+    Returns
+    -------
+
+    """
+    #note that basis must be sorted in order for this to work properly
+    windows_min = basis.min()
+    windows_max = basis.max()
+    window_starts = np.arange(windows_min, windows_max, window)
+    window_starts = pd.Series(window_starts,index=window_starts)
+    indexed_what = pd.Series(what.values, index=basis.values)
+
+    def applyToWindow(val):
+        # using slice_indexer rather that what.loc [val:val+window] allows
+        # window limits that are not specifically in the index
+        indexer = indexed_what.index.slice_indexer(val, val+window, 1)
+        chunk = indexed_what.iloc[indexer]
+
+        return func(chunk)[0][0]
+
+    rolled = window_starts.apply(applyToWindow)
+
+    return rolled
