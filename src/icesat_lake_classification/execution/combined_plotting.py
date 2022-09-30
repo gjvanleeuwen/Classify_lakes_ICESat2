@@ -1,4 +1,5 @@
 import os
+import math
 
 import numpy as np
 import pandas as pd
@@ -13,14 +14,38 @@ import icesat_lake_classification.path_utils as pth
 if __name__ == "__main__":
 
     utl.set_log_level(log_level='INFO')
-    plt.ioff()
     pd.options.mode.chained_assignment = None  # default='warn'
 
-    if plot_lakes:
+    plot_starter_index = 300
+    ph_per_image = 25000
+    NDWI_threshold = 0.18
+    B3_B4_threshold = 0.09
+
+    base_dir = 'F:/onderzoeken/thesis_msc/'
+    s2_training_dir = 'F:/onderzoeken/thesis_msc/data/Training'
+
+    exploration_data_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/'
+    classification_df_fn_list = pth.get_files_from_folder(os.path.join(exploration_data_dir, 'lake_class'), '*1222*gt*l*_class.csv')
+
+    for fn in classification_df_fn_list:
+
+        fn_s2 = pth.get_files_from_folder(os.path.join(s2_training_dir, pth.get_filname_without_extension(fn)), '*.csv')[0]
+
+        utl.log(fn_s2, log_level='INFO')
+        utl.log(fn, log_level='INFO')
+
+        classification_df = pd.read_csv(fn)
+        s2_df = pd.read_csv(fn_s2)
+
+        classification_df['NDWI'], classification_df['B03'], classification_df['B04'] = np.nan, np.nan, np.nan
+        classification_df['NDWI'].loc[classification_df['clusters'] == 5] = s2_df['NDWI_10m'].values.copy()
+        classification_df['B03'].loc[classification_df['clusters'] == 5] = s2_df['B03_10'].values.copy()
+        classification_df['B04'].loc[classification_df['clusters'] == 5] = s2_df['B04_10'].values.copy()
+        classification_df['NDWI_class'] = 0 # nodata value
+        classification_df['NDWI_class'] = np.where((classification_df['NDWI'] > NDWI_threshold) &
+                                                   ((classification_df['B03'] - classification_df['B04']) > B3_B4_threshold), 1, 2) # 1 for lakes, 2 for no lake
+
         ### make some graphs
-        utl.log('Make graphs of the calculated mode', log_level='INFO')
-        plt.ioff()
-        ph_per_image = 100000
         n_ph = len(classification_df)
 
         if not pth.check_existence(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10])):
@@ -29,50 +54,58 @@ if __name__ == "__main__":
         start_index_array = np.arange(0, n_ph, ph_per_image)
         end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
 
+        # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
+        cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'cornflowerblue', 3: 'wheat', 4: 'red', 5: 'mediumaquamarine'}
+        classification_df['c_cluster'] = [cluster_map[x] if not math.isnan(x) else cluster_map[0] for x in classification_df['clusters']]
+
+        # clusters - 1 Lake, 0 no lake, 2, deep enough but to steep, 3 not deep enough but flat
+        result_map_bottom = {1: 'Indigo', 0: 'dimgrey', 2: 'darkviolet', 3: 'violet', np.nan: 'dimgrey'}
+        classification_df['c_bottom'] = [result_map_bottom[x] if not math.isnan(x) else result_map_bottom[0] for x in classification_df['lake_rolling'] ]
+
+        # clusters - 1 lake in NDWI, 0 is nodata, 2 no lake
+        result_map_surface = {1: 'Indigo', 0: 'dimgrey', 2: 'lightgrey', np.nan: 'dimgrey'}
+        classification_df['c_surface'] = [result_map_surface[x] if not math.isnan(x) else result_map_surface[0] for x in classification_df['NDWI_class']]
+
         for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
 
-            if i < 75:
-                continue
+            plt.ioff()
+            utl.log("Iterating through track -  {}/{} - Photon count {}".format(int(ph_start / ph_per_image)+1, len(start_index_array),
+                                                                ph_start), log_level='INFO')
 
             index_slice = slice(ph_start, ph_end)
-            utl.log("Plotting slice {}/{} - Photon count {}".format(int(ph_start / ph_per_image), len(start_index_array),
-                                                                    ph_start), log_level='INFO')
+            if (i > plot_starter_index) & (len(classification_df['NDWI_class'].iloc[index_slice].unique()) > 1):
 
-            # create dataframe with just 2 variables
-            data_df = classification_df[
-                ['lon', 'lat', 'distance', 'height', 'clusters', 'bottom_distance', 'bottom_height', 'surface_distance',
-                 'surface_height', 'lake', 'lake_rolling']].iloc[index_slice]
+                utl.log("Conditions apply - Plotting this graph", log_level='INFO')
 
-            # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
-            cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'dodgerblue', 3: 'wheat', 4: 'red', 5: 'mediumseagreen'}
-            c_cluster = [cluster_map[x] for x in data_df['clusters']]
+                f1, ax1 = plt.subplots(figsize=(20, 20))
+                ax1.scatter(classification_df['distance'].iloc[index_slice], classification_df['height'].iloc[index_slice],
+                            c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.5)
 
-            f1, ax1 = plt.subplots(figsize=(20, 20))
-            ax1.scatter(data_df['distance'], data_df['height'], c=c_cluster, marker=',',
-                        s=0.5)
+                # plot bottom_line
+                points = np.array([classification_df['bottom_distance'].iloc[index_slice], classification_df['bottom_height'].iloc[index_slice]]).T.reshape(-1, 1,2)
+                lines = np.concatenate([points[:-1], points[1:]], axis=1)
+                colored_lines = LineCollection(lines, colors=classification_df['c_bottom'].iloc[index_slice], linewidths=(2,))
+                ax1.add_collection(colored_lines)
 
-            result_map = {1: 'red', 0: 'green', 2: 'orange', 3: 'yellow'}
-            c_bottom = [result_map[x] for x in data_df['lake_rolling']]
+                # plot surface line
+                points = np.array([classification_df['surface_distance'].iloc[index_slice], classification_df['surface_height'].iloc[index_slice]]).T.reshape(-1,1,2)
+                lines = np.concatenate([points[:-1], points[1:]], axis=1)
+                colored_lines = LineCollection(lines, colors=classification_df['c_surface'].iloc[index_slice], linewidths=(2,))
+                ax1.add_collection(colored_lines)
 
-            # plot bottom_line
-            points = np.array([data_df.loc[:, 'bottom_distance'], data_df.loc[:, 'bottom_height']]).T.reshape(-1, 1, 2)
-            lines = np.concatenate([points[:-1], points[1:]], axis=1)
-            colored_lines = LineCollection(lines, colors=c_bottom, linewidths=(2,))
-            ax1.add_collection(colored_lines)
+                ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
+                ax1.get_xaxis().set_tick_params(which='both', direction='in')
+                ax1.get_yaxis().set_tick_params(which='both', direction='in')
+                ax1.set_xlabel('distance')
+                ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
 
-            # plot surface line
-            ax1.plot(data_df.loc[:, 'surface_distance'], data_df.loc[:, 'surface_height'])
+                outpath = os.path.join(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10],
+                                                    'FINAL_classification_lon_{}_lat_{}_ph_{}_distance.png'.format(
+                                                        np.round(classification_df['lon'].iloc[index_slice].iloc[0], 2),
+                                                        np.round(classification_df['lat'].iloc[index_slice].iloc[0], 2),
+                                                        ph_start, np.round(classification_df['distance'].iloc[index_slice].iloc[0], 2))))
+                plt.savefig(outpath)
+                plt.close('all')
 
-            ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
-            ax1.get_xaxis().set_tick_params(which='both', direction='in')
-            ax1.get_yaxis().set_tick_params(which='both', direction='in')
-            ax1.set_xlabel('distance')
-            ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
-
-            outpath = os.path.join(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10],
-                                                'FINAL_classification_lon_{}_lat_{}_ph_{}_distance_median.png'.format(
-                                                    np.round(data_df['lon'].iloc[0], 2),
-                                                    np.round(data_df['lat'].iloc[0], 2),
-                                                    ph_start, np.round(data_df['distance'].iloc[0], 2))))
-            plt.savefig(outpath)
-            plt.close('all')
+            else:
+                continue

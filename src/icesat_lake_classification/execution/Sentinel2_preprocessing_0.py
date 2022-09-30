@@ -12,20 +12,21 @@ import numpy as np
 if __name__ == "__main__":
 
     utl.set_log_level(log_level='INFO')
+    pd.options.mode.chained_assignment = None  # default='warn'
     data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
 
     calculate_NDWI = False
-    calculate_NDWI_mask = False
+    calculate_NDWI_mask = True
     resample_SWIR = False
-    get_ROI = True
+    get_ROI = False
 
     overwrite_NDWI = False
-    overwrite_NDWI_mask = False
+    overwrite_NDWI_mask = True
     overwrite_SWIR = False
 
     s2_band_list = ['B03_10', 'B04_10', 'B08_10'] # Green, Red, NIR, SWIR
     NDWI_calc = '(A - B) / (A + B)'
-    mask_calc = "A*logical_and(A<=1,A>=0.3)"
+    mask_calc = "A*logical_and(A<=1,A>=0.18) * logical_and((B-C) > 0.09)"
 
     s2_fn_list = pth.get_files_from_folder(data_dir, '*.SAFE')
 
@@ -49,7 +50,7 @@ if __name__ == "__main__":
         if calculate_NDWI_mask:
 
             NDWI_mask_fn = s2_files[0][:-11] + "NDWI_10m_mask.tif"
-            NDWI_raster_dict2 = {'A': NDWI_fn}
+            NDWI_raster_dict2 = {'A': NDWI_fn, 'B': s2_files[0], 'C': s2_files[1]}
 
             if not pth.check_existence(NDWI_mask_fn, overwrite=overwrite_NDWI_mask):
                 utl.log("Make mask " + NDWI_mask_fn, log_level='INFO')
@@ -78,7 +79,7 @@ if __name__ == "__main__":
 
     if get_ROI:
         classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/lake_class'
-        classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt*l*_class.csv')
+        classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt2l*_class.csv')
         s2_band_list = ['NDWI_10m', 'B03_10', "B04_10"]
 
         training_data_dir = "F:/onderzoeken/thesis_msc/data/Training/"
@@ -89,7 +90,9 @@ if __name__ == "__main__":
         for i, fn in enumerate(classification_df_fn_list):
             utl.log('Loading Beam file: {}'.format(fn), log_level="INFO")
             classification_df = pd.read_csv(fn, usecols=['lon', 'lat', 'lake_rolling', 'clusters'])
-            classification_df = classification_df[classification_df['clusters'] == 5]
+            classification_df = classification_df[classification_df['clusters'] == 5].copy()
+
+            for band in s2_band_list: classification_df[band] = np.nan
 
             # loop through the various S2 scenes for this date
             for i, subdir in enumerate(s2_dir_list):
@@ -98,6 +101,7 @@ if __name__ == "__main__":
                 utl.log('Loading Sentinel image {}/{} -- name: {}'.format(i, len(s2_dir_list), subdir), log_level="INFO")
                 # loop through the different S2 Bands
                 for s2_fn, band in zip(s2_files, s2_band_list):
+
                     utl.log('Loading band {}'.format(band), log_level="INFO")
 
                     RB = RasterBand(s2_fn, check_file_existence=True)
@@ -106,19 +110,19 @@ if __name__ == "__main__":
                     proj = srs.ExportToWkt()
                     RB = RB.warp(projection=proj)
                     values, index = RB.get_values_at_coordinates(classification_df['lon'].values, classification_df['lat'].values)
-                    index = index[0][np.where((values != RB.no_data_value) & (~np.isnan(values)))]
-                    values = values[np.where((values != RB.no_data_value) & (~np.isnan(values)))]
+                    if not RB.no_data_value:
+                        index = index[0][np.where((values != 0) & (~np.isnan(values)))]
+                        values = values[np.where((values != 0) & (~np.isnan(values)))]
+                    else:
+                        index = index[0][np.where((values != RB.no_data_value) & (~np.isnan(values)))]
+                        values = values[np.where((values != RB.no_data_value) & (~np.isnan(values)))]
 
                     if len(values) > 0:
-                        utl.log('Icesat track overlays with Sentinel image - Adding data to dataframe', log_level='INFO') #, sentinel extent {}, Coordinates extent {}'.format(RB.extent.to_tuple(),
-                                    #[classification_df['lon'].min(), classification_df['lon'].max(), classification_df['lat'].min(), classification_df['lat'].max()]), log_level='INFO')
-                        if not band in classification_df.columns:
-                            classification_df[band] = classification_df['lon'][classification_df['lon'] == 0]
-                        classification_df[band].iloc[index] = values
+                        utl.log('Icesat track overlays with Sentinel image {} - Adding data to dataframe'.format(band), log_level='INFO')
+                        classification_df[band].iloc[index] = values.copy()
                         # print(min(values), max(values))
                     else:
-                        utl.log('NO match found - Sentinel image does not overlay ICESat Track',log_level='INFO') # sentinel extent {}, Coordinates extent {}'.format(RB.extent.to_tuple(),
-                                    #[classification_df['lon'].min(), classification_df['lon'].max(), classification_df['lat'].min(), classification_df['lat'].max()]), log_level='INFO')
+                        utl.log('NO match found - Sentinel image {} - does not overlay ICESat Track'.format(band),log_level='INFO')
 
             outdir = os.path.join(training_data_dir, pth.get_filname_without_extension(fn))
 

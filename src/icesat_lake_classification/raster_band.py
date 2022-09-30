@@ -1,5 +1,3 @@
-
-import warnings
 from uuid import uuid4
 
 # external packages
@@ -7,7 +5,6 @@ from osgeo import gdal, gdalconst, osr, gdal_array
 import numpy as np
 
 from icesat_lake_classification.raster_utils import get_coordinate, BoundingBox, retry_on_tiff_read_fail_decorator, write_geotiff
-
 
 class RasterBand(object):
     """
@@ -17,6 +14,7 @@ class RasterBand(object):
     ----------
     raster_file_name: str
         Filename optionally including path
+        Can also start with /vsigs or gs:// for files on cloud storage
     check_file_existence: bool
         Try to open the dataset as check if the file can be accessed
         set to False by default
@@ -386,6 +384,18 @@ class RasterBand(object):
         return self.ysize, self.xsize
 
     @property
+    def offset(self):
+        if self._offset is None:
+            self._get_raster_info()
+        return self._offset
+
+    @property
+    def scale(self):
+        if self._scale is None:
+            self._get_raster_info()
+        return self._scale
+
+    @property
     def no_data_value(self):
         if self._no_data_value is None:
             self._get_raster_info()
@@ -404,6 +414,115 @@ class RasterBand(object):
                 self._get_raster_info()
             return self._data_type
 
+    @property
+    def unscaled_dtype(self):
+        return self._unscaled_dtype
+
+    @unscaled_dtype.setter
+    def unscaled_dtype(self, dtype):
+        if not issubclass(dtype, np.floating):
+            raise TypeError('scaled_dtype property should be a subclass of np.floating')
+        self._unscaled_dtype = dtype
+
+    def _mask_invalid(self, arr, fill=None):
+        if (self.vmin is not None) or (self.vmax is not None):
+            if fill is None:
+                fill = self.no_data_value
+            arr = np.where(np.logical_and(arr > self.vmax if self.vmax is not None else True,
+                                          arr < self.vmin if self.vmin is not None else True),
+                           fill, arr)
+        return arr
+
+    def iter_data(self, chunksize_x=5000, chunksize_y=5000, overlap=0):
+        """
+        Iterate over the data of this RasterBand in chunks
+
+        Parameters
+        ----------
+        chunksize_x: int, optional
+        chunksize_y: int, optional
+        overlap: int, optional
+
+        Yields
+        ------
+        data: numpy.ndarray
+        """
+        for x_slice, y_slice in iter_slices(self.shape,
+                                            chunksize_x=chunksize_x,
+                                            chunksize_y=chunksize_y, overlap=overlap):
+            yield self[y_slice, x_slice]
+
+
+    def mean(self, chunksize_x=5000, chunksize_y=5000,
+             use_area_weights=True,
+             mask_rb=None,
+             add_nodata=None):
+        """
+        Calculate the mean of the data array taking into account
+        the area of each pixel and masking the defined no data value.
+
+        Parameters
+        ----------
+        chunksize_x: int, optional
+        chunksize_y: int, optional
+        use_area_weights: boolean, optional
+            if the projection is EPSG:4326 the pixels are weighted by
+            the area. This is automatically disabled if the projection
+            is a different one.
+        mask_rb: :py:class:`vds_io.vds_raster_file.RasterBand` object
+            zero - one mask to apply before calculation of the mean
+            where the mask is zero the data will be masked before
+            calculation
+        add_nodata: list of values, optional
+            all of these values will be treated as no data before calculating the mean
+
+        Returns
+        -------
+        mean: float
+            Mean value
+
+        Raises
+        ------
+        ValueError: if no valid data was found
+        """
+        if add_nodata is not None:
+            if type(add_nodata) != list:
+                add_nodata = [add_nodata]
+
+        sum_weights = 0
+        sum_data = 0
+
+        epsg_4326 = osr.SpatialReference()
+        epsg_4326.ImportFromEPSG(4326)
+        if epsg_4326.IsSame(self.srs) == 0:
+            use_area_weights = False
+
+        for (data, area), (x_slice, y_slice) in zip(self.iter_data_area(chunksize_x=chunksize_x,
+                                                                        chunksize_y=chunksize_y),
+                                                    iter_slices(self.shape,
+                                                                chunksize_x=chunksize_x,
+                                                                chunksize_y=chunksize_y)):
+            if mask_rb is not None:
+                mask_data = mask_rb[y_slice, x_slice]
+                data[mask_data == 0] = self._no_data_value
+
+            if add_nodata is not None:
+                for add_nodata_value in add_nodata:
+                    data[data == add_nodata_value] = self._no_data_value
+
+            if self._no_data_value is not np.nan:
+                valid = data != self._no_data_value
+            else:
+                valid = np.isfinite(data)
+            if use_area_weights:
+                sum_data = sum_data + np.sum(data[valid] * area[valid])
+                sum_weights = sum_weights + np.sum(area[valid])
+            else:
+                sum_data = sum_data + np.sum(data[valid])
+                sum_weights = sum_weights + data.size
+        if sum_weights == 0:
+            raise ValueError('No valid data found')
+        return sum_data / sum_weights
 
     def get_values_at_coordinates(self, x, y):
         """
@@ -428,6 +547,18 @@ class RasterBand(object):
             c = c[index]
 
         return self.data[r, c], index
+
+    def get_coordinate(self, row, col):
+        """
+        Get the top-left pixel coordinate of given row-column combination
+        only valid for vertically oriented rasters
+
+        Parameters
+        ----------
+        row: int
+        col: int
+        """
+        return get_coordinate(self.gt, row, col)
 
 
     def warp(self, file_name=None,
@@ -506,3 +637,114 @@ class RasterBand(object):
         rb.band.SetOffset(self.offset)
         return rb
 
+    def warp_like_rb(self, ref_rb, file_name=None, read_masked_scaled=False, **kwargs):
+        """
+        Warp this object to a RasterBand similar to a reference RasterBand
+
+        The extent, pixelsize, spatial reference will be matched to ref_rb
+
+        Parameters
+        ----------
+        ref_rb: RasterBand
+            Object from which to infer
+        file_name: str
+            if not provided, an in-memory dataset will be created (into /vsimem/rasterband)
+        read_masked_scaled: bool
+            Automatically apply mask, scale and offset during reading of the output data
+        **kwargs
+            keyword arguments parsed to RasterBand.warp (and ultimately gdal.WarpOptions)
+
+        Returns
+        -------
+        rb: RasterBand
+            The warped dataset loaded as RasterBand
+        """
+        xres, yres = None, None
+        if not ref_rb.gt[1] == self.gt[1]:
+            xres = ref_rb.gt[1]
+        if not ref_rb.gt[5] == self.gt[5]:
+            yres = ref_rb.gt[5]
+        return self.warp(file_name,
+                         bbox=ref_rb.extent,
+                         xres=xres,
+                         yres=yres,
+                         dst_srs=ref_rb.srs,
+                         read_masked_scaled=read_masked_scaled,
+                         **kwargs)
+
+
+def iter_slices(shape, chunksize_x=5000, chunksize_y=5000, overlap=0):
+    """
+    iterator for the slices over this RasterBand in the given chunksizes
+
+    Parameters
+    ----------
+    shape: tuple
+        Two element tuple (ysize, xsize)
+    chunksize_x: int, optional
+        Use chunks of this many elements in x direction
+    chunksize_y: int, optional
+        Use chunks of this many elements in x direction
+    overlap: int, optional
+        Overlap slices by this many datapoints (where possible)
+
+    Yields
+    ------
+    x_slice: slice
+    y_slice: slice
+    """
+
+    for x_start in range(0, shape[1], chunksize_x):
+        x_end = x_start + chunksize_x
+        x_slice = slice(max(x_start - overlap, 0),
+                        min(x_end + overlap, shape[1]),
+                        None)
+
+        for y_start in range(0, shape[0], chunksize_y):
+            y_end = y_start + chunksize_y
+            y_slice = slice(max(y_start - overlap, 0),
+                            min(y_end + overlap, shape[0]),
+                            None)
+
+            yield x_slice, y_slice
+
+
+def geotiff_to_nc(geotiff_fname, nc_fname, dt_ref,
+                  bandname_mapper=None,
+                  global_metadata=None,
+                  variable_metadata=None):
+    """
+    Convert geotiff into netCDF4 file.
+
+    Parameters
+    ----------
+    geotiff_fname: string
+        filename of geotiff file
+    nc_fname: string
+        filename of netcdf4 target file
+    dt_ref: datetime.datetime
+        time to use for time dimension
+    bandname_mapper: dict, optional
+        give a name for each band in the geotiff
+        If not given the bands will just be numbered 'Band 1', 'Band 2' ...
+        keys: int from 1 to number of band
+        values: strings for variable names
+    global_metadata: dict
+        Write additional metadata to netcdf file
+    """
+    rb = RasterBand(geotiff_fname, check_file_existence=True)
+
+    bands = range(1, rb.ds.RasterCount + 1)
+
+    if bandname_mapper is None:
+        bandname_mapper = {band_nr: 'Band {}'.format(str(band_nr))
+                           for band_nr in bands}
+
+    for band_nr in bands:
+        rb = RasterBand(geotiff_fname, bandnr=band_nr)
+
+        rb.to_netcdf(nc_fname, dt_ref,
+                     bandname_mapper[band_nr],
+                     global_metadata=global_metadata)
+
+# EOF

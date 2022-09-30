@@ -1,10 +1,15 @@
 import logging
+import functools
+import time
+import timeit
 
 import numpy as np
 import pandas as pd
 import math
 
 from geopy.distance import geodesic
+import scipy.spatial as spatial
+from sklearn.neighbors import NearestNeighbors
 
 
 def set_log_level(log_level):
@@ -67,13 +72,11 @@ def calc_euclidean_distance_matrix(coordinates):
     return cdist(coordinates, coordinates)
 
 def get_points_in_radius(points, origin, radius=1.0):
-    import math
-
     x1, y1 = origin
     return [(x2,y2) for x2,y2 in points if math.sqrt((x1-x2)**2+(y1-y2)**2) <= radius]
 
 def get_number_NN_radius(coords, radius=1.0):
-    import scipy.spatial as spatial
+
 
     tree = spatial.KDTree(np.array(coords))
 
@@ -85,16 +88,12 @@ def get_density_NN_radius(coords, radius=1.0):
     return get_number_NN_radius(coords, radius) / radius**2
 
 def get_distance_NN_min_pts(data, min_pts=1):
-    from sklearn.neighbors import NearestNeighbors
-
     nbrs = NearestNeighbors(n_neighbors=min_pts).fit(data)
     distances, indices = nbrs.kneighbors(data)
 
     return distances
 
 def get_average_distance_NN_min_pts(data, min_pts=1):
-    from sklearn.neighbors import NearestNeighbors
-
     nbrs = NearestNeighbors(n_neighbors=min_pts).fit(data)
     distances, indices = nbrs.kneighbors(data)
 
@@ -221,9 +220,6 @@ def closestDistanceBetweenLines (a0, a1, b0, b1, clampAll=False, clampA0=False, 
 
     return pA, pB, np.linalg.norm(pA - pB)
 
-import functools
-import time
-
 def timer(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -235,8 +231,6 @@ def timer(func):
         return value
 
     return wrapper
-
-import timeit
 
 class codeTimer:
     def __init__(self, name=None):
@@ -358,3 +352,6 @@ def rollBy_mode(what, basis, window, func):
     rolled = window_starts.apply(applyToWindow)
 
     return rolled
+
+def printtime():
+    return time.ctime()
