@@ -6,6 +6,10 @@ from scipy.stats import mode
 
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
+from icesat_lake_classification.raster_band import RasterBand
+
+from osgeo import gdal, ogr, osr
+
 
 if __name__ == "__main__":
 
@@ -13,29 +17,30 @@ if __name__ == "__main__":
     pd.options.mode.chained_assignment = None  # default='warn'
 
     base_dir = 'F:/onderzoeken/thesis_msc/'
-    write_full_df = True
-    write_only_class_df = True
-    plot_lakes = True
+    figures_dir = os.path.join(base_dir, 'figures')
+    data_dir = os.path.join(base_dir, 'data')
 
-    classification_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/cluster'
-    exploration_data_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/'
-    classification_df_fn_list = pth.get_files_from_folder(classification_dir, '*1222*gt*l*_class.csv')
+    s2_band_list = ['NDWI_10m', 'B03_10', "B04_10"]
+    s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
+
+    write_full_df = True
+    write_only_class_df = False
+
+    cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir, 'cluster'), '*1222*gt1l*.csv')
 
     ### Parameters
     # Step 2
-    window_surface_line1 = 50
-
-    buffer_step2_line1 = 0.75
+    window_surface_line1 = 20  # meters
 
     # Step 3
-    window_bottom_line = 50
-    buffer_bottom_line = - 0.4
+    window_bottom_line = 25  # meters
+    buffer_bottom_line = - 0.25  # meters
 
     # step lake classification
-    window_lake_class = 10
+    window_lake_class = 10  # meters, same as NDWI
 
     # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4
-    for fn in classification_df_fn_list:
+    for fn in cluster_fn_in_list:
 
         utl.log("Loading classification track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
         with utl.codeTimer('loading data'):
@@ -73,7 +78,7 @@ if __name__ == "__main__":
             classification_df['clusters'].iloc[np.where((classification_df['clusters'] == 3) & (df_interp['diff'] < buffer_bottom_line))] = 5
 
             bottom_df.sort_values('distance', inplace=True)
-            bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmean))
+            bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmedian))
             result_index = [utl.find_nearest_sorted(bottom_df['distance'].values, value - (window_bottom_line)) for value in bottom_line.index]
 
             bottom_line['idx'] = bottom_df['distance'].iloc[result_index].index
@@ -125,13 +130,54 @@ if __name__ == "__main__":
 
             del(bottom_line_class)
 
-        if write_full_df:
-            utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-            classification_df.to_csv(os.path.join(exploration_data_dir, 'lake_class', (os.path.basename(fn)[:-4] + '.csv')))
+        with utl.codeTimer('Extracting Sentinel-2 data'):
+            s2_dir_list = pth.get_files_from_folder(s2_data_dir, '*.SAFE')
 
-        if write_only_class_df:
-            utl.log("Saving classification result - ONLY CLASS - for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-            out_df = classification_df[['lon', 'lat', 'clusters', 'lake_rolling']].iloc[::100].copy()
-            out_df.to_csv(os.path.join(exploration_data_dir, 'lake_class', (os.path.basename(fn)[:-9] + '_only_classification.csv')))
+            utl.log('Loading Beam file: {}'.format(fn), log_level="INFO")
+            classification_smaller = classification_df.iloc[::100].loc[['lon', 'lat']].copy()
+
+            for band in s2_band_list: classification_smaller[band] = np.nan
+
+            # loop through the various S2 scenes for this date
+            for i, subdir in enumerate(s2_dir_list):
+                s2_files = pth.get_sorted_s2_filelist(subdir, band_list=s2_band_list, recursive=True,
+                                                      extension='*')
+                utl.log('Loading Sentinel image {}/{} -- name: {}'.format(i, len(s2_dir_list), subdir), log_level="INFO")
+                # loop through the different S2 Bands
+                for s2_fn, band in zip(s2_files, s2_band_list):
+
+                    utl.log('Loading band {}'.format(band), log_level="INFO")
+
+                    RB = RasterBand(s2_fn, check_file_existence=True)
+                    srs = osr.SpatialReference()
+                    srs.SetWellKnownGeogCS("WGS84")
+                    proj = srs.ExportToWkt()
+                    RB = RB.warp(projection=proj)
+                    values, index = RB.get_values_at_coordinates(classification_smaller['lon'].values, classification_smaller['lat'].values)
+                    if not RB.no_data_value:
+                        index = index[0][np.where((values != 0) & (~np.isnan(values)))]
+                        values = values[np.where((values != 0) & (~np.isnan(values)))]
+                    else:
+                        index = index[0][np.where((values != RB.no_data_value) & (~np.isnan(values)))]
+                        values = values[np.where((values != RB.no_data_value) & (~np.isnan(values)))]
+
+                    if len(values) > 0:
+                        utl.log('Icesat track overlays with Sentinel image {} - Adding data to dataframe'.format(band), log_level='INFO')
+                        classification_smaller[band].iloc[index] = values.copy()
+                        # print(min(values), max(values))
+                    else:
+                        utl.log('NO match found - Sentinel image {} - does not overlay ICESat Track'.format(band),log_level='INFO')
 
 
+            for band in s2_band_list:
+                classification_df[band] = classification_smaller[band]
+
+        with utl.codeTimer('Saving the Dataframes'):
+            if write_full_df:
+                utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
+                classification_df.to_csv(os.path.join(data_dir, 'classification', (os.path.basename(fn))))
+
+            if write_only_class_df:
+                utl.log("Saving classification result - ONLY CLASS - for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
+                out_df = classification_df[['lon', 'lat', 'clusters', 'lake_rolling']].iloc[::100].copy()
+                out_df.to_csv(os.path.join('F:/onderzoeken/thesis_msc/Exploration/classification', (os.path.basename(fn)[:-9] + '_only_classification.csv')))

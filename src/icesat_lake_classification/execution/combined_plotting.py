@@ -16,34 +16,49 @@ if __name__ == "__main__":
     utl.set_log_level(log_level='INFO')
     pd.options.mode.chained_assignment = None  # default='warn'
 
-    plot_starter_index = 300
-    ph_per_image = 25000
+    plot_starter_index = 150
+    ph_per_image = 50000
     NDWI_threshold = 0.18
     B3_B4_threshold = 0.09
 
     base_dir = 'F:/onderzoeken/thesis_msc/'
-    s2_training_dir = 'F:/onderzoeken/thesis_msc/data/Training'
+    figures_dir = os.path.join(base_dir, 'figures')
+    data_dir = os.path.join(base_dir, 'data')
 
-    exploration_data_dir = 'F:/onderzoeken/thesis_msc/Exploration/data/'
-    classification_df_fn_list = pth.get_files_from_folder(os.path.join(exploration_data_dir, 'lake_class'), '*1222*gt*l*_class.csv')
+    if not pth.check_existence(os.path.join(figures_dir, 'final')):
+        os.mkdir(os.path.join(figures_dir, 'final'))
+
+    classification_df_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'classification'), '*1222*gt*l*.csv')
 
     for fn in classification_df_fn_list:
 
-        fn_s2 = pth.get_files_from_folder(os.path.join(s2_training_dir, pth.get_filname_without_extension(fn)), '*.csv')[0]
+        if not pth.check_existence(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn))):
+            os.mkdir(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn)))
 
-        utl.log(fn_s2, log_level='INFO')
         utl.log(fn, log_level='INFO')
-
         classification_df = pd.read_csv(fn)
-        s2_df = pd.read_csv(fn_s2)
 
-        classification_df['NDWI'], classification_df['B03'], classification_df['B04'] = np.nan, np.nan, np.nan
-        classification_df['NDWI'].loc[classification_df['clusters'] == 5] = s2_df['NDWI_10m'].values.copy()
-        classification_df['B03'].loc[classification_df['clusters'] == 5] = s2_df['B03_10'].values.copy()
-        classification_df['B04'].loc[classification_df['clusters'] == 5] = s2_df['B04_10'].values.copy()
+        last_index = np.where(classification_df['NDWI_10m'] > 0)[0][-1]
+        classification_df['NDWI_10m'].fillna(method='ffill',inplace=True)
+        classification_df['NDWI_10m'].iloc[last_index:] = np.nan
+
+        last_index = np.where(classification_df['B03_10'] > 0)[0][-1]
+        classification_df['B03_10'].fillna(method='ffill',inplace=True)
+        classification_df['B03_10'].iloc[last_index:] = np.nan
+
+        last_index = np.where(classification_df['B04_10'] > 0)[0][-1]
+        classification_df['B04_10'].fillna(method='ffill',inplace=True)
+        classification_df['B04_10'].iloc[last_index:] = np.nan
+
         classification_df['NDWI_class'] = 0 # nodata value
-        classification_df['NDWI_class'] = np.where((classification_df['NDWI'] > NDWI_threshold) &
-                                                   ((classification_df['B03'] - classification_df['B04']) > B3_B4_threshold), 1, 2) # 1 for lakes, 2 for no lake
+        classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold) &
+                                                   ((classification_df['B03_10'] - classification_df['B04_10']) > B3_B4_threshold), 1, 2) # 1 for lakes, 2 for no lake
+
+        # make confusion matrix
+        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1,0)
+        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
+        classification_df['positives'] = np.where( (classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
+        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
 
         ### make some graphs
         n_ph = len(classification_df)
@@ -73,9 +88,9 @@ if __name__ == "__main__":
                                                                 ph_start), log_level='INFO')
 
             index_slice = slice(ph_start, ph_end)
-            if (i > plot_starter_index) & (len(classification_df['NDWI_class'].iloc[index_slice].unique()) > 1):
+            if (i > plot_starter_index) & ((1 in classification_df['NDWI_class'].iloc[index_slice].unique()) | (1 in classification_df['lake_rolling'].iloc[index_slice].unique())):
 
-                utl.log("Conditions apply - Plotting this graph", log_level='INFO')
+                utl.log("Conditions apply - Plotting this graph- {}".format(classification_df['NDWI_class'].iloc[index_slice].unique()), log_level='INFO')
 
                 f1, ax1 = plt.subplots(figsize=(20, 20))
                 ax1.scatter(classification_df['distance'].iloc[index_slice], classification_df['height'].iloc[index_slice],
@@ -99,8 +114,8 @@ if __name__ == "__main__":
                 ax1.set_xlabel('distance')
                 ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
 
-                outpath = os.path.join(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10],
-                                                    'FINAL_classification_lon_{}_lat_{}_ph_{}_distance.png'.format(
+                outpath = os.path.join(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn),
+                                                    'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance.png'.format(
                                                         np.round(classification_df['lon'].iloc[index_slice].iloc[0], 2),
                                                         np.round(classification_df['lat'].iloc[index_slice].iloc[0], 2),
                                                         ph_start, np.round(classification_df['distance'].iloc[index_slice].iloc[0], 2))))
