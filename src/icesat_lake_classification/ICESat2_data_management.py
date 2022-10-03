@@ -1,9 +1,7 @@
-import os
 import numpy as np
 import pandas as pd
 import scipy
 
-import icepyx as ipx
 from icesat2_toolkit.read_ICESat2_ATL03 import read_HDF5_ATL03
 
 import icesat_lake_classification.utils as utl
@@ -54,6 +52,7 @@ def download_ICESat2_data(outpath, earthdata_uid, email,
     -------
     iterable of strings with all names of downloaded files.
     """
+    import icepyx as ipx
     region = ipx.Query(product=product, spatial_extent=spatial_extent,
                        date_range=date_range, start_time=start_time, end_time=end_time,
                        cycles=cycles, tracks=tracks, version=version)
@@ -176,42 +175,46 @@ def get_cum_along_track_distance(track_data, beams=None):
 
     return along_track_distance_dict
 
-def get_classification_data(track_data_dict, along_track_distance_dict, file_info, outdir=None, overwrite=False):
-    data_dict = {}
-    rgt = file_info['rgt']
-    date = str(file_info['datetime'].date())
+def get_dem_height_beam_ph(track_data, beams=None):
 
-    for beam in ['gt1l', 'gt1r', 'gt2l', 'gt2r', 'gt3l', 'gt3r']:
-        n_ph = len(track_data_dict[beam]['heights']['h_ph'])
+    dem_height_dict = {}
+    if not beams:
+        beams = ['gt1l', 'gt1r', 'gt2l', 'gt2r', 'gt3l', 'gt3r']
 
-        if not pth.check_existence(os.path.join(outdir, 'ATL03_photon_data_track_{}_date_{}_beam_{}_nph_{}.csv'.format(
-                rgt,date,beam,n_ph)),overwrite=overwrite):
+    for beam in beams:
 
-            utl.log('3a. -- Processing beam {} for RGT {} and date {}'.format(beam,rgt,date), log_level='INFO')
+        n_pe = track_data[beam]['heights']['delta_time'].shape
+        # -- along-track and across-track distance for photon events
+        x_atc = track_data[beam]['heights']['dist_ph_along']
+        # -- digital elevation model interpolated to photon events
+        dem_h = np.zeros((n_pe))
 
-            beam_track_data = track_data_dict[beam]
-            beam_along_track_distance = along_track_distance_dict[beam]
+        # -- first photon in the segment (convert to 0-based indexing)
+        Segment_Index_begin = track_data[beam]['geolocation']['ph_index_beg'] - 1
+        # -- number of photon events in the segment
+        Segment_PE_count = track_data[beam]['geolocation']['segment_ph_cnt']
+        # -- along-track distance for each ATL03 segment
+        Segment_Distance = track_data[beam]['geolocation']['segment_dist_x']
 
-            height_ph = beam_track_data['heights']['h_ph']
-            lon_ph = beam_track_data['heights']['lon_ph']
-            lat_ph = beam_track_data['heights']['lat_ph']
 
-            data_dict_temp = {'height': height_ph,
-                         'distance': beam_along_track_distance,
-                         'lon': lon_ph, 'lat': lat_ph
-                         }
+        # -- for each 20m segment
+        for j, _ in enumerate(track_data[beam]['geolocation']['segment_id']):
+            # -- index for 20m segment j
+            idx = Segment_Index_begin[j]
+            # -- skip segments with no photon events
+            if (idx < 0):
+                continue
+            # -- number of photons in 20m segment
+            cnt = Segment_PE_count[j]
+            # -- add segment distance to along-track coordinates
+            x_atc[idx:idx + cnt] += Segment_Distance[j]
+            # -- interpolate digital elevation model to photon events
+            dem_h[idx:idx + cnt] = track_data[beam]['geophys_corr']['dem_h'][j]
 
-            classification_df = pd.DataFrame(data_dict_temp)
+        dem_height_dict.update({beam: dem_h})
 
-            if outdir:
-                classification_df.to_csv(os.path.join(outdir, 'ATL03_photon_data_track_{}_date_{}_beam_{}_nph_{}.csv'.format(rgt, date, beam, n_ph)))
+    return dem_height_dict
 
-            data_dict.update({beam:classification_df})
-        else:
-            utl.log('3a. -- beam {} for RGT {} and date {} - Already exists, not processing'.format(beam, rgt, date), log_level='INFO')
-            data_dict.update({beam: {}})
-
-    return data_dict
 
 def get_ph_index_from_coordinates(longitude_data, min_lon, max_lon):
 
@@ -230,37 +233,6 @@ def get_classification_data_for_lake_from_disk(data_dir, beam, rgt, min_lon, max
 
     return lake_data.iloc[:,index_slice]
 
-
-def get_dem_height_beam_ph(val):
-    n_pe = val['heights']['delta_time'].shape
-    # -- along-track and across-track distance for photon events
-    x_atc = val['heights']['dist_ph_along']
-    # -- digital elevation model interpolated to photon events
-    dem_h = np.zeros((n_pe))
-
-    # -- first photon in the segment (convert to 0-based indexing)
-    Segment_Index_begin = val['geolocation']['ph_index_beg'] - 1
-    # -- number of photon events in the segment
-    Segment_PE_count = val['geolocation']['segment_ph_cnt']
-    # -- along-track distance for each ATL03 segment
-    Segment_Distance = val['geolocation']['segment_dist_x']
-
-
-    # -- for each 20m segment
-    for j, _ in enumerate(val['geolocation']['segment_id']):
-        # -- index for 20m segment j
-        idx = Segment_Index_begin[j]
-        # -- skip segments with no photon events
-        if (idx < 0):
-            continue
-        # -- number of photons in 20m segment
-        cnt = Segment_PE_count[j]
-        # -- add segment distance to along-track coordinates
-        x_atc[idx:idx + cnt] += Segment_Distance[j]
-        # -- interpolate digital elevation model to photon events
-        dem_h[idx:idx + cnt] = val['geophys_corr']['dem_h'][j]
-
-    return dem_h
 
 def get_background_rate (val):
     # -- Transmit time of the reference photon

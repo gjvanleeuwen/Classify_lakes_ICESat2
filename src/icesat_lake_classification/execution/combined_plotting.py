@@ -37,34 +37,25 @@ if __name__ == "__main__":
 
         utl.log(fn, log_level='INFO')
         classification_df = pd.read_csv(fn)
+        s2_df = pd.read_csv(os.path.join(data_dir, 'Training', (os.path.basename(fn))))
 
-        last_index = np.where(classification_df['NDWI_10m'] > 0)[0][-1]
-        classification_df['NDWI_10m'].fillna(method='ffill',inplace=True)
-        classification_df['NDWI_10m'].iloc[last_index:] = np.nan
-
-        last_index = np.where(classification_df['B03_10'] > 0)[0][-1]
-        classification_df['B03_10'].fillna(method='ffill',inplace=True)
-        classification_df['B03_10'].iloc[last_index:] = np.nan
-
-        last_index = np.where(classification_df['B04_10'] > 0)[0][-1]
-        classification_df['B04_10'].fillna(method='ffill',inplace=True)
-        classification_df['B04_10'].iloc[last_index:] = np.nan
-
+        classification_df[['NDWI_10m', 'B03_10', 'B04_10']] = s2_df[['NDWI_10m', 'B03_10', 'B04_10']].copy()
+        del s2_df
         classification_df['NDWI_class'] = 0 # nodata value
         classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold) &
                                                    ((classification_df['B03_10'] - classification_df['B04_10']) > B3_B4_threshold), 1, 2) # 1 for lakes, 2 for no lake
 
         # make confusion matrix
-        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1,0)
-        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
-        classification_df['positives'] = np.where( (classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
-        classification_df['positives'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
+        classification_df['CM'] = np.where((classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1,0)
+        classification_df['CM'][classification_df['CM'] == 0] = np.where((classification_df['lake_rolling'][classification_df['CM'] == 0] == 1) & (classification_df['NDWI_class'][classification_df['CM'] == 0] != 1), 2, 0)
+        classification_df['CM'][classification_df['CM'] == 0] = np.where((classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (classification_df['NDWI_class'][classification_df['CM'] == 0] != 1) & (classification_df['CM'] == 0), 3, 0)
+        classification_df['CM'][classification_df['CM'] == 0] = np.where((classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (classification_df['NDWI_class'][classification_df['CM'] == 0] == 1) & (classification_df['CM'] == 0), 4, 0)
+
+        utl.log('True positives {}, False positives {}, True negatives {}, False Negatives {}'.format(1, 2, 3, 4), log_level='INFO')
+        utl.log(classification_df['CM'].value_counts(), log_level='INFO')
 
         ### make some graphs
         n_ph = len(classification_df)
-
-        if not pth.check_existence(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10])):
-            os.mkdir(os.path.join(base_dir, 'figures/', os.path.basename(fn)[:-10]))
 
         start_index_array = np.arange(0, n_ph, ph_per_image)
         end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
@@ -115,7 +106,7 @@ if __name__ == "__main__":
                 ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
 
                 outpath = os.path.join(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn),
-                                                    'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance.png'.format(
+                                                    'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_median.png'.format(
                                                         np.round(classification_df['lon'].iloc[index_slice].iloc[0], 2),
                                                         np.round(classification_df['lat'].iloc[index_slice].iloc[0], 2),
                                                         ph_start, np.round(classification_df['distance'].iloc[index_slice].iloc[0], 2))))

@@ -26,7 +26,7 @@ if __name__ == "__main__":
     if not pth.check_existence(os.path.join(figures_dir, 'class')):
         os.mkdir(os.path.join(figures_dir, 'class'))
 
-    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*1222*gt1l*')
+    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*1222*gt*l*')
 
     utl.log('processing these files:', log_level='INFO')
     for fn in in_fn_list:

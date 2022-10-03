@@ -1,4 +1,5 @@
 import os
+import math
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,9 @@ import icesat_lake_classification.path_utils as pth
 from icesat_lake_classification.raster_band import RasterBand
 
 from osgeo import gdal, ogr, osr
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from scipy.optimize import curve_fit
 
 
 if __name__ == "__main__":
@@ -23,21 +27,29 @@ if __name__ == "__main__":
     s2_band_list = ['NDWI_10m', 'B03_10', "B04_10"]
     s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
 
-    write_full_df = True
+    write_full_df = False
     write_only_class_df = False
 
-    cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir, 'cluster'), '*1222*gt1l*.csv')
+    plot = True
+    process_lines = True
+    extract_s2_data = False
+
+    cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir, 'cluster'), '*1222*gt2l*.csv')
 
     ### Parameters
+    refractive_index = 1.33
     # Step 2
     window_surface_line1 = 20  # meters
 
     # Step 3
     window_bottom_line = 25  # meters
-    buffer_bottom_line = - 0.25  # meters
+    buffer_bottom_line = - 0.20  # meters
 
     # step lake classification
-    window_lake_class = 10  # meters, same as NDWI
+    window_lake_class = 7.5  # meters
+    lake_boundary = 1
+    slope_boundary = 0.0025
+
 
     # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4
     for fn in cluster_fn_in_list:
@@ -45,96 +57,303 @@ if __name__ == "__main__":
         utl.log("Loading classification track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
         with utl.codeTimer('loading data'):
             classification_df = pd.read_csv(fn, usecols=['lon', 'lat', 'height', 'distance','clusters']) #, encoding='latin-1')
-            surface_df = classification_df.loc[classification_df['clusters'] == 2]
 
-        utl.log("extracting surface for: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-        with utl.codeTimer('surface line creation'):
-            # make rolling average of surface and calculate difference with normal data
+        if process_lines:
 
-            surface_df.sort_values('distance', inplace=True)
-            surface_line = pd.DataFrame(utl.rollBy(surface_df['height'], surface_df['distance'], window_surface_line1, np.nanmedian))
-            result_index = [utl.find_nearest_sorted(surface_df['distance'].values, value) for value in surface_line.index]
+            utl.log("extracting surface for: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
+            with utl.codeTimer('surface line creation'):
+                # make rolling average of surface and calculate difference with normal data
 
-            surface_line['idx'] = surface_df['distance'].iloc[result_index].index
-            surface_line = surface_line.reset_index().set_index('idx')
-            surface_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
-            surface_line['distance'] = surface_line['distance'] + (window_surface_line1/2)
+                surface_df = classification_df.loc[classification_df['clusters'] == 2]
+                surface_df.sort_values('distance', inplace=True)
+                surface_line = pd.DataFrame(utl.rollBy(surface_df['height'], surface_df['distance'], window_surface_line1, np.nanmedian))
+                result_index = [utl.find_nearest_sorted(surface_df['distance'].values, value) for value in surface_line.index]
 
-            surface_df_window = utl.interpolate_df_to_new_index(surface_df,
-                                                        surface_line.loc[:, ['distance', 'height']].copy(), 'distance')
+                surface_line['idx'] = surface_df['distance'].iloc[result_index].index
+                surface_line = surface_line.reset_index().set_index('idx')
+                surface_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
+                surface_line['distance'] = surface_line['distance'] + (window_surface_line1/2)
 
-            df_interp = utl.interpolate_df_to_new_index(classification_df,
-                                                        surface_df_window.loc[:, ['distance', 'height']].copy(),
-                                                        'distance')
-            del(surface_df, surface_df_window, surface_line)
+                surface_df_window = utl.interpolate_df_to_new_index(surface_df,
+                                                            surface_line.loc[:, ['distance', 'height']].copy(), 'distance')
 
-
-        ### step 3 - Extracting the bottom
-        utl.log("Extracting bottom for: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-        with utl.codeTimer('bottom line creation'):
-
-            df_interp['diff'] = classification_df['height'] - df_interp['height']
-            bottom_df = classification_df.loc[(classification_df['clusters'] == 3) & (df_interp['diff'] < buffer_bottom_line)]
-            classification_df['clusters'].iloc[np.where((classification_df['clusters'] == 3) & (df_interp['diff'] < buffer_bottom_line))] = 5
-
-            bottom_df.sort_values('distance', inplace=True)
-            bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmedian))
-            result_index = [utl.find_nearest_sorted(bottom_df['distance'].values, value - (window_bottom_line)) for value in bottom_line.index]
-
-            bottom_line['idx'] = bottom_df['distance'].iloc[result_index].index
-            bottom_line = bottom_line.reset_index().set_index('idx')
-            bottom_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
-            bottom_line['distance'] = bottom_line['distance'] + (window_bottom_line / 2)
-
-            bottom_df_window = utl.interpolate_df_to_new_index(bottom_df,
-                                                        bottom_line.loc[:, ['distance', 'height']].copy(), 'distance')
-
-            bottom_df_interp = utl.interpolate_df_to_new_index(classification_df,
-                                                        bottom_df_window.loc[:, ['distance', 'height']].copy(), 'distance')
-
-            del (bottom_df, bottom_df_window, bottom_line)
+                df_interp = utl.interpolate_df_to_new_index(classification_df,
+                                                            surface_df_window.loc[:, ['distance', 'height']].copy(),
+                                                            'distance')
+                del(surface_df, surface_df_window, surface_line)
 
 
-        utl.log('Sorting data and calculating slope and lake depth', log_level='INFO')
-        with utl.codeTimer('making lake classification for bottom line'):
-            # sort data on distance
-            classification_df['bottom_distance'] = bottom_df_interp['distance'].copy()
-            classification_df['surface_distance'] = df_interp['distance'].copy()
-            classification_df['bottom_height'] = bottom_df_interp['height'].copy()
-            classification_df['surface_height'] = df_interp['height'].copy()
-            classification_df.sort_values(by=['distance'], inplace=True)
-            del(df_interp, bottom_df_interp)
+            ### step 3 - Extracting the bottom
+            utl.log("Extracting bottom for: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
+            with utl.codeTimer('bottom line creation'):
 
-            classification_df['lake_diff'] = classification_df['surface_height'] - classification_df['bottom_height']
+                # adjust height of bottom photons and change clusters further - calculate difference between surface and bottom photons
+                df_interp['diff'] = classification_df['height'] - df_interp['height']
+                bottom_index = np.where((classification_df['clusters'] == 3) & (df_interp['diff'] < buffer_bottom_line))
+                classification_df['height'].iloc[bottom_index] = classification_df['height'].iloc[bottom_index] + ((df_interp['height'].iloc[bottom_index] - classification_df['height'].iloc[bottom_index]) * (refractive_index-1))
+                classification_df['clusters'].iloc[np.where((classification_df['clusters'] == 3) & (df_interp['diff'] < buffer_bottom_line))] = 5
 
-            classification_df['angle'] = np.rad2deg( np.arctan2(np.roll(classification_df['surface_height'], 1) - classification_df['surface_height'],
-                                                                 np.roll(classification_df['surface_distance'], 1) - classification_df['surface_distance'])) #angle = np.rad2deg(np.arctan2(y[-1] - y[0], x[-1] - x[0]))
-            classification_df['slope'] = np.abs((np.roll(classification_df['surface_height'], 1) - classification_df['surface_height']) / ( np.roll(classification_df['surface_distance'], 1) - classification_df['surface_distance'])) # abs(rise/run)
+                # seperate bottom photons
+                bottom_df = classification_df.iloc[bottom_index].copy()
 
-            classification_df['lake'] = np.where((classification_df['lake_diff'] > 1.5) & (np.abs(classification_df['slope']) < 0.0025), 1, 0)
-            classification_df['lake'].iloc[np.where((classification_df['lake_diff'] > 1.5) & (np.abs(classification_df['slope']) >= 0.0025))] = 2
-            classification_df['lake'].iloc[np.where((np.abs(classification_df['slope']) < 0.0025) & (classification_df['lake_diff'] < 1.5))] = 3
+                bottom_df.sort_values('distance', inplace=True)
+                bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmean))
+                result_index = [utl.find_nearest_sorted(bottom_df['distance'].values, value - (window_bottom_line)) for value in bottom_line.index]
 
-        utl.log('Creating bottom line lake classification - mode over window', log_level='INFO')
-        with utl.codeTimer('roling window of lake line'):
+                bottom_line['idx'] = bottom_df['distance'].iloc[result_index].index
+                bottom_line = bottom_line.reset_index().set_index('idx')
+                bottom_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
+                bottom_line['distance'] = bottom_line['distance'] + (window_bottom_line / 2)
 
-            bottom_line_class = pd.DataFrame(utl.rollBy_mode(classification_df['lake'], classification_df['distance'], window_lake_class, mode))
-            result_index = [utl.find_nearest_sorted(classification_df['distance'].values, value + (window_lake_class/2)) for value in bottom_line_class.index]
+                bottom_df_window = utl.interpolate_df_to_new_index(bottom_df,
+                                                            bottom_line.loc[:, ['distance', 'height']].copy(), 'distance')
 
-            bottom_line_class['idx'] = classification_df['distance'].iloc[result_index].index
-            bottom_line_class = bottom_line_class.reset_index().set_index('idx')
-            bottom_line_class.rename(columns={'index': 'distance', 0: 'lake'}, inplace=True)
+                bottom_df_interp = utl.interpolate_df_to_new_index(classification_df,
+                                                            bottom_df_window.loc[:, ['distance', 'height']].copy(), 'distance')
 
-            classification_df['lake_rolling'] = bottom_line_class['lake']
-            classification_df['lake_rolling'] = classification_df['lake_rolling'].fillna(method='ffill')
+                del (bottom_df, bottom_df_window, bottom_line, bottom_index)
 
-            del(bottom_line_class)
 
-        with utl.codeTimer('Extracting Sentinel-2 data'):
+            utl.log('Sorting data and calculating slope and lake depth', log_level='INFO')
+            with utl.codeTimer('making lake classification for bottom line'):
+                # sort data on distance
+                classification_df['bottom_distance'] = bottom_df_interp['distance'].copy()
+                classification_df['surface_distance'] = df_interp['distance'].copy()
+                classification_df['bottom_height'] = bottom_df_interp['height'].copy()
+                classification_df['surface_height'] = df_interp['height'].copy()
+                classification_df.sort_values(by=['distance'], inplace=True)
+                del(df_interp, bottom_df_interp)
+
+                classification_df['lake_diff'] = classification_df['surface_height'] - classification_df['bottom_height']
+
+                classification_df['angle'] = np.rad2deg( np.arctan2(np.roll(classification_df['surface_height'], 1) - classification_df['surface_height'],
+                                                                     np.roll(classification_df['surface_distance'], 1) - classification_df['surface_distance'])) #angle = np.rad2deg(np.arctan2(y[-1] - y[0], x[-1] - x[0]))
+                classification_df['slope'] = np.abs((np.roll(classification_df['surface_height'], 1) - classification_df['surface_height']) / ( np.roll(classification_df['surface_distance'], 1) - classification_df['surface_distance'])) # abs(rise/run)
+
+                classification_df['lake'] = np.where((classification_df['lake_diff'] > lake_boundary) & (np.abs(classification_df['slope']) < slope_boundary), 1, 0)
+                classification_df['lake'].iloc[np.where((classification_df['lake_diff'] > lake_boundary) & (np.abs(classification_df['slope']) >= slope_boundary))] = 2
+                classification_df['lake'].iloc[np.where((np.abs(classification_df['slope']) < slope_boundary) & (classification_df['lake_diff'] < lake_boundary))] = 3
+
+            utl.log('Creating bottom line lake classification - mode over window', log_level='INFO')
+            with utl.codeTimer('roling window of lake line'):
+
+                bottom_line_class = pd.DataFrame(utl.rollBy_mode(classification_df['lake'], classification_df['distance'], window_lake_class, mode, nodata=0))
+                result_index = [utl.find_nearest_sorted(classification_df['distance'].values, value + (window_lake_class/2)) for value in bottom_line_class.index]
+
+                bottom_line_class['idx'] = classification_df['distance'].iloc[result_index].index
+                bottom_line_class = bottom_line_class.reset_index().set_index('idx')
+                bottom_line_class.rename(columns={'index': 'distance', 0: 'lake'}, inplace=True)
+                bottom_line_class = bottom_line_class[~bottom_line_class.index.duplicated(keep='first')]
+
+                classification_df['lake_rolling'] = bottom_line_class['lake']
+                classification_df['lake_rolling'] = classification_df['lake_rolling'].fillna(method='ffill')
+
+                del(bottom_line_class, result_index)
+
+            with utl.codeTimer('Saving the Dataframes'):
+                if write_full_df:
+                    print(len(classification_df))
+                    utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]),
+                            log_level='INFO')
+                    classification_df.to_csv(os.path.join(data_dir, 'classification', (os.path.basename(fn))))
+
+                if write_only_class_df:
+                    utl.log("Saving classification result - ONLY CLASS - for track/beam: {}".format(
+                        os.path.basename(fn)[:-4]), log_level='INFO')
+                    out_df = classification_df[['lon', 'lat', 'clusters', 'lake_rolling']].iloc[::100].copy()
+                    out_df.to_csv(os.path.join('F:/onderzoeken/thesis_msc/Exploration/classification',
+                                               (os.path.basename(fn)[:-9] + '_only_classification.csv')))
+
+
+        # Define the Gaussian function
+        def box_and_ski(R, A_0, A_1, A_2):
+            D = (A_0 / (R+A_1)) + A_2
+            return D
+
+
+        if plot:
+            utl.set_log_level(log_level='INFO')
+            pd.options.mode.chained_assignment = None  # default='warn'
+
+            plot_starter_index = 150
+            ph_per_image = 50000
+            NDWI_threshold = 0.18
+            B3_B4_threshold = 0.09
+
+            base_dir = 'F:/onderzoeken/thesis_msc/'
+            figures_dir = os.path.join(base_dir, 'figures')
+            data_dir = os.path.join(base_dir, 'data')
+
+            if not pth.check_existence(os.path.join(figures_dir, 'final')):
+                os.mkdir(os.path.join(figures_dir, 'final'))
+
+            if not pth.check_existence(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn))):
+                os.mkdir(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn)))
+
+            utl.log('adding Sentinel data and NDWI class for plots {}'.format(fn), log_level='INFO')
+            s2_df = pd.read_csv(os.path.join(data_dir, 'Training', (os.path.basename(fn))))
+
+            classification_df[['NDWI_10m', 'B03_10', 'B04_10']] = s2_df[['NDWI_10m', 'B03_10', 'B04_10']].copy()
+            del s2_df
+            classification_df['NDWI_class'] = 0  # nodata value
+            classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold) &
+                                                       ((classification_df['B03_10'] - classification_df[
+                                                           'B04_10']) > B3_B4_threshold), 1, 2)  # 1 for lakes, 2 for no lake
+
+            # #make the empirical relation
+            # utl.log('estimating empirical relations', log_level='INFO')
+            # # needs to have s2 values, classified as lake by ICESAT and by the NDWI
+            # empirical_index_green = np.where((classification_df['B04_10'] > 0) & (classification_df['NDWI_class'] == 1) & (classification_df['lake_rolling'] == 1))
+            # green_depth = (classification_df['surface_height'].iloc[empirical_index_green] - classification_df['bottom_height'].iloc[empirical_index_green]).values
+            # parameters_green, covariance_green = curve_fit(box_and_ski, classification_df['B04_10'].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
+            #                                                green_depth[np.logical_and(~np.isnan(green_depth), green_depth < 25)], p0=[1,0,1], maxfev=5000)
+            #
+            # # needs to have s2 values, classified as lake by ICESAT and by the NDWI
+            # empirical_index_red = np.where((classification_df['B03_10'] > 0) & (classification_df['NDWI_class'] == 1) & (classification_df['lake_rolling'] == 1))
+            # red_depth = (classification_df['surface_height'].iloc[empirical_index_red] - classification_df['bottom_height'].iloc[empirical_index_red]).values
+            # parameters_red, covariance_red = curve_fit(box_and_ski, classification_df['B03_10'].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
+            #                                            red_depth[np.logical_and(~np.isnan(red_depth), red_depth <25)], p0=[1,0,1], maxfev=5000)
+            #
+            # # calculate empirical depths
+            # classification_df['green'] = classification_df['surface_height'].iloc[empirical_index_green][np.logical_and(~np.isnan(green_depth), green_depth <25)] - \
+            #                              box_and_ski(classification_df['B04_10'].iloc[empirical_index_green][np.logical_and(~np.isnan(green_depth), green_depth <25)], **parameters_green)
+            #
+            # classification_df['red'] = classification_df['surface_height'].iloc[empirical_index_red] - \
+            #                              box_and_ski(classification_df['B03_10'].iloc[empirical_index_red], **parameters_red)
+            #
+            # # plot empirical relations
+            # fig, axs = plt.subplots(1,2)
+            # axs[0].scatter(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
+            #                green_depth[np.logical_and(~np.isnan(green_depth), green_depth <25)], s=0.5)
+            # axs[0].plot(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
+            #             box_and_ski(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)], *parameters_green),
+            #             'g-', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_green))
+            # axs[0].set_ylabel('depth')
+            # axs[0].set_xlabel('Green reflectance')
+            #
+            # axs[1].scatter(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
+            #                red_depth[np.logical_and(~np.isnan(red_depth), red_depth <25)], s=0.5)
+            # axs[1].plot(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
+            #             box_and_ski(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)], *parameters_red),
+            #             'r--', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_red))
+            # axs[0].set_ylabel('depth')
+            # axs[0].set_xlabel('red reflectance')
+            #
+            # fig.suptitle('curve fit for Sentinel 2 red and green bands')
+            # plt.savefig('test.png')
+            # plt.close('all')
+
+            utl.log('making confusion_matrix', log_level='INFO')
+            # make confusion matrix
+            classification_df['CM'] = np.where(
+                (classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
+            classification_df['CM'][classification_df['CM'] == 0] = np.where(
+                (classification_df['lake_rolling'][classification_df['CM'] == 0] == 1) & (
+                            classification_df['NDWI_class'][classification_df['CM'] == 0] != 1), 2, 0)
+            classification_df['CM'][classification_df['CM'] == 0] = np.where(
+                (classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (
+                            classification_df['NDWI_class'][classification_df['CM'] == 0] != 1) & (
+                            classification_df['CM'] == 0), 3, 0)
+            classification_df['CM'][classification_df['CM'] == 0] = np.where(
+                (classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (
+                            classification_df['NDWI_class'][classification_df['CM'] == 0] == 1) & (
+                            classification_df['CM'] == 0), 4, 0)
+
+            utl.log(
+                'True positives {}, False positives {}, True negatives {}, False Negatives {}'.format(classification_df['CM'].value_counts()[1],
+                                                                                                      classification_df['CM'].value_counts()[2],
+                                                                                                      classification_df['CM'].value_counts()[3],
+                                                                                                      classification_df['CM'].value_counts()[4]), log_level='INFO')
+
+            ### make some graphs
+            n_ph = len(classification_df)
+
+            start_index_array = np.arange(0, n_ph, ph_per_image)
+            end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
+
+            # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
+            cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'cornflowerblue', 3: 'wheat', 4: 'red',
+                           5: 'mediumaquamarine'}
+            classification_df['c_cluster'] = [cluster_map[x] if not math.isnan(x) else cluster_map[0] for x in
+                                              classification_df['clusters']]
+
+            # clusters - 1 Lake, 0 no lake, 2, deep enough but to steep, 3 not deep enough but flat
+            result_map_bottom = {1: 'Indigo', 0: 'dimgrey', 2: 'darkviolet', 3: 'violet', np.nan: 'dimgrey'}
+            classification_df['c_bottom'] = [result_map_bottom[x] if not math.isnan(x) else result_map_bottom[0] for
+                                             x in classification_df['lake_rolling']]
+
+            # clusters - 1 lake in NDWI, 0 is nodata, 2 no lake
+            result_map_surface = {1: 'Indigo', 0: 'dimgrey', 2: 'lightgrey', np.nan: 'dimgrey'}
+            classification_df['c_surface'] = [result_map_surface[x] if not math.isnan(x) else result_map_surface[0]
+                                              for x in classification_df['NDWI_class']]
+
+            for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
+
+                plt.ioff()
+                utl.log(
+                    "Iterating through track -  {}/{} - Photon count {}".format(int(ph_start / ph_per_image) + 1,
+                                                                                len(start_index_array),
+                                                                                ph_start), log_level='INFO')
+
+                index_slice = slice(ph_start, ph_end)
+                if (i > plot_starter_index) & ((1 in classification_df['NDWI_class'].iloc[index_slice].unique()) & (
+                        1 in classification_df['lake_rolling'].iloc[index_slice].unique())):
+
+                    utl.log("Conditions apply - Plotting this graph- {}".format(
+                        classification_df['NDWI_class'].iloc[index_slice].unique()), log_level='INFO')
+
+                    f1, ax1 = plt.subplots(figsize=(20, 20))
+                    ax1.scatter(classification_df['distance'].iloc[index_slice],
+                                classification_df['height'].iloc[index_slice],
+                                c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.5)
+
+                    # plot bottom_line
+                    points = np.array([classification_df['bottom_distance'].iloc[index_slice],
+                                       classification_df['bottom_height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
+                    lines = np.concatenate([points[:-1], points[1:]], axis=1)
+                    colored_lines = LineCollection(lines, colors=classification_df['c_bottom'].iloc[index_slice],
+                                                   linewidths=(2,))
+                    ax1.add_collection(colored_lines)
+
+                    # plot surface line
+                    points_surface = np.array([classification_df['surface_distance'].iloc[index_slice],
+                                       classification_df['surface_height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
+                    lines_surface = np.concatenate([points_surface[:-1], points_surface[1:]], axis=1)
+                    colored_lines_surface = LineCollection(lines_surface, colors=classification_df['c_surface'].iloc[index_slice],
+                                                   linewidths=(2,))
+                    ax1.add_collection(colored_lines_surface)
+
+                    # # plot empirical
+                    # ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['red'].iloc[index_slice], 'g')
+                    # ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['green'].iloc[index_slice], 'r')
+
+                    ax1.plot(classification_df['distance'].iloc[index_slice],
+                             classification_df['dem'].iloc[index_slice], 'r--')
+
+                    ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
+                    ax1.get_xaxis().set_tick_params(which='both', direction='in')
+                    ax1.get_yaxis().set_tick_params(which='both', direction='in')
+                    ax1.set_xlabel('distance')
+                    ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
+
+                    outpath = os.path.join(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn),
+                                                        'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_mean.png'.format(
+                                                            np.round(classification_df['lon'].iloc[index_slice].iloc[0],2),
+                                                            np.round(classification_df['lat'].iloc[index_slice].iloc[0],2),
+                                                            ph_start, np.round(classification_df['distance'].iloc[
+                                                                                   index_slice].iloc[0], 2))))
+                    plt.savefig(outpath)
+                    plt.close('all')
+
+                else:
+                    continue
+
+
+        if extract_s2_data:
             s2_dir_list = pth.get_files_from_folder(s2_data_dir, '*.SAFE')
 
             utl.log('Loading Beam file: {}'.format(fn), log_level="INFO")
-            classification_smaller = classification_df.iloc[::100].loc[['lon', 'lat']].copy()
+            classification_smaller = classification_df[['lon', 'lat']].iloc[::100].copy()
 
             for band in s2_band_list: classification_smaller[band] = np.nan
 
@@ -145,8 +364,6 @@ if __name__ == "__main__":
                 utl.log('Loading Sentinel image {}/{} -- name: {}'.format(i, len(s2_dir_list), subdir), log_level="INFO")
                 # loop through the different S2 Bands
                 for s2_fn, band in zip(s2_files, s2_band_list):
-
-                    utl.log('Loading band {}'.format(band), log_level="INFO")
 
                     RB = RasterBand(s2_fn, check_file_existence=True)
                     srs = osr.SpatialReference()
@@ -168,16 +385,11 @@ if __name__ == "__main__":
                     else:
                         utl.log('NO match found - Sentinel image {} - does not overlay ICESat Track'.format(band),log_level='INFO')
 
-
+            df = classification_df[['lon', 'lat']].copy()
             for band in s2_band_list:
-                classification_df[band] = classification_smaller[band]
+                df[band] = classification_smaller[band].copy()
+                last_index = np.where(df[band] > 0)[0][-1]
+                df[band].fillna(method='ffill', inplace=True)
+                df[band].iloc[last_index:] = np.nan
 
-        with utl.codeTimer('Saving the Dataframes'):
-            if write_full_df:
-                utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-                classification_df.to_csv(os.path.join(data_dir, 'classification', (os.path.basename(fn))))
-
-            if write_only_class_df:
-                utl.log("Saving classification result - ONLY CLASS - for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-                out_df = classification_df[['lon', 'lat', 'clusters', 'lake_rolling']].iloc[::100].copy()
-                out_df.to_csv(os.path.join('F:/onderzoeken/thesis_msc/Exploration/classification', (os.path.basename(fn)[:-9] + '_only_classification.csv')))
+            df.to_csv(os.path.join(data_dir, 'Training', (os.path.basename(fn))))

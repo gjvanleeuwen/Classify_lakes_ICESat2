@@ -315,7 +315,7 @@ def rollBy(what, basis, window, func):
     return rolled
 
 
-def rollBy_mode(what, basis, window, func):
+def rollBy_mode(what, basis, window, func, nodata=0):
     """
 
     Parameters
@@ -347,7 +347,8 @@ def rollBy_mode(what, basis, window, func):
         indexer = indexed_what.index.slice_indexer(val, val+window, 1)
         chunk = indexed_what.iloc[indexer]
 
-        return func(chunk)[0][0]
+        if len(chunk) > 0:
+            return func(chunk)[0][0]
 
     rolled = window_starts.apply(applyToWindow)
 
