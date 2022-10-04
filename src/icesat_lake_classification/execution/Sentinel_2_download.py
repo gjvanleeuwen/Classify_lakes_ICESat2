@@ -14,25 +14,17 @@ if __name__ == "__main__":
     utl.log("start api login", log_level="INFO")
     api = SentinelAPI('ertyboi', 'Sentinel1!', 'https://scihub.copernicus.eu/dhus')
 
-    outpath = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
+    outpath = "F:/onderzoeken/thesis_msc/data/Sentinel/20190617"
     geometry = {"type":"Polygon","coordinates":[[[-49.509888,69.597805],[-47.488403,69.553715],[-47.471924,67.32716],[-48.076172,64.031339],[-49.559326,63.821288],[-49.509888,69.597805]]]}
 
     # search by polygon, time, and SciHub query keywords
     footprint = geojson_to_wkt(geometry)
     utl.log("query products", log_level="INFO")
     products = api.query(footprint,
-                         date=('20190619', '20190621'),
+                         date=('20190616', '20190618'),
                          platformname='Sentinel-2',
-                         cloudcoverpercentage=(0, 30),
+                         cloudcoverpercentage=(0, 15),
                          producttype='S2MSI2A')
-
-    for product_id in products.keys():
-        is_online = api.is_online(product_id)
-
-        if is_online:
-            print('Product {} is online. Starting download.'.format(product_id))
-        else:
-            print('Product {} is not online.'.format(product_id))
 
     downloaded, triggered, failed = download_all(products,outpath=outpath)
 

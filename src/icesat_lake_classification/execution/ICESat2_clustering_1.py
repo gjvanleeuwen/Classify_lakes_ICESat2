@@ -26,7 +26,7 @@ if __name__ == "__main__":
     if not pth.check_existence(os.path.join(figures_dir, 'class')):
         os.mkdir(os.path.join(figures_dir, 'class'))
 
-    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*1222*gt*l*')
+    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*1222*gt*')
 
     utl.log('processing these files:', log_level='INFO')
     for fn in in_fn_list:
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     # Step 1
     min_pts = 6
     eps_method = 'max'
-    strict_step1 = 1.5
+    strict_step1 = 1
 
     # Step 2
     min_pts_step2 = 3

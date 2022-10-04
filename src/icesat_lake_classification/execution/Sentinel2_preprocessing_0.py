@@ -18,11 +18,11 @@ if __name__ == "__main__":
     figures_dir = os.path.join(base_dir, 'figures')
     data_dir = os.path.join(base_dir, 'data')
 
-    s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190620"
+    s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190617"
 
-    calculate_NDWI = False
+    calculate_NDWI = True
     calculate_NDWI_mask = False
-    resample_SWIR = False
+    resample_SWIR = True
     get_ROI = True
 
     overwrite_NDWI = False
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     s2_band_list = ['B03_10', 'B04_10', 'B08_10'] # Green, Red, NIR, SWIR
     NDWI_calc = '(A - B) / (A + B)'
-    mask_calc = "A*logical_and(A>=0.18, (B-C) > 0.09)"
+    mask_calc = "A*logical_and(A>=0.21)"
 
     s2_fn_list = pth.get_files_from_folder(s2_data_dir, '*.SAFE')
 

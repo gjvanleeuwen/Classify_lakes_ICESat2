@@ -8,6 +8,7 @@ from scipy.stats import mode
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
 from icesat_lake_classification.raster_band import RasterBand
+from icesat_lake_classification.ICESat2_visualization import get_confusion_matrix
 
 from osgeo import gdal, ogr, osr
 import matplotlib.pyplot as plt
@@ -34,7 +35,7 @@ if __name__ == "__main__":
     process_lines = True
     extract_s2_data = False
 
-    cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir, 'cluster'), '*1222*gt2l*.csv')
+    cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir, 'cluster'), '*1222*gt*.csv')
 
     ### Parameters
     refractive_index = 1.33
@@ -50,13 +51,17 @@ if __name__ == "__main__":
     lake_boundary = 1
     slope_boundary = 0.0025
 
+    # plots
+    plot_starter_index = 150
+    ph_per_image = 50000
+    NDWI_threshold = 0.21
 
-    # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4
+    # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, 5 = real bottom
     for fn in cluster_fn_in_list:
 
         utl.log("Loading classification track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
         with utl.codeTimer('loading data'):
-            classification_df = pd.read_csv(fn, usecols=['lon', 'lat', 'height', 'distance','clusters']) #, encoding='latin-1')
+            classification_df = pd.read_csv(fn, usecols=['lon', 'lat', 'height', 'distance','clusters', 'dem']) #, encoding='latin-1')
 
         if process_lines:
 
@@ -97,7 +102,7 @@ if __name__ == "__main__":
                 bottom_df = classification_df.iloc[bottom_index].copy()
 
                 bottom_df.sort_values('distance', inplace=True)
-                bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmean))
+                bottom_line = pd.DataFrame(utl.rollBy(bottom_df['height'], bottom_df['distance'], window_bottom_line, np.nanmedian))
                 result_index = [utl.find_nearest_sorted(bottom_df['distance'].values, value - (window_bottom_line)) for value in bottom_line.index]
 
                 bottom_line['idx'] = bottom_df['distance'].iloc[result_index].index
@@ -170,106 +175,116 @@ if __name__ == "__main__":
             D = (A_0 / (R+A_1)) + A_2
             return D
 
+        classification_df['SNR'], classification_df['SurfBottR'],classification_df['SurfNoiseR'], classification_df['range'], classification_df['slope_mean'] = 0, 0, 0, 0, 0
+        classification_df['dem_diff'] = np.abs(classification_df['height'] - classification_df['surface_height'])
+
+        # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, 5 is real bottom
+        for i, (ph_start, ph_end) in enumerate(zip(np.arange(0, len(classification_df), 10000),
+                                                   np.append(np.arange(10000, len(classification_df), 10000), len(classification_df) - 1))):
+            index_slice = slice(ph_start, ph_end)
+
+            n_noise_ph = classification_df['clusters'].iloc[index_slice].value_counts()[0] # 0 = noise
+            n_signal_ph = len(classification_df) - n_noise_ph
+            if 5 in classification_df['clusters'].iloc[index_slice].value_counts():
+                n_bottom_ph = classification_df['clusters'].iloc[index_slice].value_counts()[5]
+            else:
+                n_bottom_ph = 1# bottom
+            if 2 in classification_df['clusters'].iloc[index_slice].value_counts():
+                n_surface_ph = classification_df['clusters'].iloc[index_slice].value_counts()[2]
+            else:
+                n_surface_ph = 1 # surface
+
+            classification_df['SNR'].iloc[index_slice] = n_signal_ph/n_noise_ph # around 1600
+            classification_df['SurfBottR'].iloc[index_slice] = n_surface_ph/n_bottom_ph # around 5...
+            classification_df['SurfNoiseR'].iloc[index_slice] = n_surface_ph/n_noise_ph # around 5...
+            classification_df['range'].iloc[index_slice] = np.abs(classification_df['height'].iloc[index_slice].max() - classification_df['height'].iloc[index_slice].min())
+            classification_df['slope_mean'].iloc[index_slice] = classification_df['slope'].iloc[index_slice].mean()
+
+            utl.log("stats for Photons {} - SNR {}, SurfNoiseR {},  SurfBottR {} ".format(index_slice,n_signal_ph/n_noise_ph, n_surface_ph/n_noise_ph,  n_surface_ph/n_bottom_ph))
+
+
+        s2_df = pd.read_csv(os.path.join(data_dir, 'Training', (os.path.basename(fn))))
+
+        classification_df[['NDWI_10m', 'B03_10', 'B04_10']] = s2_df[['NDWI_10m', 'B03_10', 'B04_10']].copy()
+        del s2_df
+        classification_df['NDWI_class'] = 0  # nodata value
+        classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold), 1,
+                                                   2)  # 1 for lakes, 2 for no lake
+
+
+        #make the empirical relation
+        utl.log('estimating empirical relations', log_level='INFO')
+        # needs to have s2 values, classified as lake by ICESAT and by the NDWI
+        empirical_index_green = np.where((classification_df['B04_10'] > 0) & (classification_df['NDWI_10m'] > 0.35)
+                                         & (classification_df['lake_rolling'] != 0) & (classification_df['SurfNoiseR'] > 2)
+                                         & (classification_df['dem_diff'] < 25) & (classification_df['range'] < 200) & (classification_df['slope_mean'] < 0.1))
+
+        classification_df['empirical_index'] = 0
+        classification_df['empirical_index'] = np.where((classification_df['B04_10'] > 0) & (classification_df['NDWI_10m'] > 0.35)
+                                         & (classification_df['lake_rolling'] != 0) & (classification_df['SurfNoiseR'] > 2)
+                                         & (classification_df['dem_diff'] < 25) & (classification_df['range'] < 200) & (classification_df['slope_mean'] < 0.1), 1, 2)
+
+        green_depth = (classification_df['surface_height'].iloc[empirical_index_green] - classification_df['bottom_height'].iloc[empirical_index_green]).values
+        depth_index_green = np.where((~np.isnan(green_depth)) & (green_depth < 25) & (green_depth > 0))
+
+        parameters_green, covariance_green = curve_fit(box_and_ski, classification_df['B04_10'].iloc[empirical_index_green].values[depth_index_green],
+                                                       green_depth[depth_index_green], p0=[1,0,1], maxfev=5000)
+
+        # needs to have s2 values, classified as lake by ICESAT and by the NDWI
+        empirical_index_red = np.where((classification_df['B03_10'] > 0) & (classification_df['NDWI_10m'] > 0.35)
+                                       & (classification_df['lake_rolling'] != 0) & (classification_df['SurfNoiseR'] > 2)
+                                       & (classification_df['dem_diff'] < 25) & (classification_df['range'] < 200) & (classification_df['slope_mean'] < 0.1))
+        red_depth = (classification_df['surface_height'].iloc[empirical_index_red] - classification_df['bottom_height'].iloc[empirical_index_red]).values
+        depth_index_red = np.where((~np.isnan(red_depth)) & (red_depth < 25) & (red_depth > 0))
+
+        parameters_red, covariance_red = curve_fit(box_and_ski, classification_df['B03_10'].iloc[empirical_index_red].values[depth_index_red],
+                                                   red_depth[depth_index_red], p0=parameters_green, maxfev=50000)
+
+        # # calculate empirical depths
+        classification_df['green'] = classification_df['surface_height'].copy()
+        classification_df['green'][(classification_df['B04_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)] = \
+            classification_df['surface_height'][(classification_df['B04_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)].values - \
+                                     box_and_ski(classification_df['B04_10'][(classification_df['B04_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)].values,
+                                                 parameters_green[0], parameters_green[1], parameters_green[2])
+
+        classification_df['red'] = classification_df['surface_height'].copy()
+        classification_df['red'][(classification_df['B03_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)] = \
+            classification_df['surface_height'][(classification_df['B03_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)].values - \
+                                     box_and_ski(classification_df['B03_10'][(classification_df['B03_10'] > 0) & (classification_df['NDWI_10m'] > 0.21)],
+                                                 parameters_red[0], parameters_red[1], parameters_red[2])
+
+        # plot empirical relations
+        fig, axs = plt.subplots(1,2)
+        axs[0].scatter(classification_df['B04_10'].iloc[empirical_index_green].values[depth_index_green],
+                       green_depth[depth_index_green], color='tab:blue', s=0.1, alpha=0.01)
+        axs[0].plot(np.arange(0,6000),
+                    box_and_ski(np.arange(0,6000), *parameters_green),
+                    'g-', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_green))
+        axs[0].set_ylabel('depth')
+        axs[0].set_xlabel('Green reflectance')
+
+        axs[1].scatter(classification_df['B03_10'].iloc[empirical_index_red].values[depth_index_red],
+                       red_depth[depth_index_red], color='tab:blue', s=0.1, alpha=0.01)
+        axs[1].plot(np.arange(0,8000),
+                    box_and_ski(np.arange(0,8000), *parameters_red),
+                    'r--', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_red))
+        axs[0].set_ylabel('depth')
+        axs[0].set_xlabel('red reflectance')
+
+        fig.suptitle('curve fit for Sentinel 2 red and green bands')
+        plt.savefig('Empirical_fit_{}.png'.format(pth.get_filename(fn)))
+        plt.close('all')
 
         if plot:
-            utl.set_log_level(log_level='INFO')
-            pd.options.mode.chained_assignment = None  # default='warn'
-
-            plot_starter_index = 150
-            ph_per_image = 50000
-            NDWI_threshold = 0.18
-            B3_B4_threshold = 0.09
-
-            base_dir = 'F:/onderzoeken/thesis_msc/'
-            figures_dir = os.path.join(base_dir, 'figures')
-            data_dir = os.path.join(base_dir, 'data')
-
             if not pth.check_existence(os.path.join(figures_dir, 'final')):
                 os.mkdir(os.path.join(figures_dir, 'final'))
 
             if not pth.check_existence(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn))):
                 os.mkdir(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn)))
 
-            utl.log('adding Sentinel data and NDWI class for plots {}'.format(fn), log_level='INFO')
-            s2_df = pd.read_csv(os.path.join(data_dir, 'Training', (os.path.basename(fn))))
-
-            classification_df[['NDWI_10m', 'B03_10', 'B04_10']] = s2_df[['NDWI_10m', 'B03_10', 'B04_10']].copy()
-            del s2_df
-            classification_df['NDWI_class'] = 0  # nodata value
-            classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold) &
-                                                       ((classification_df['B03_10'] - classification_df[
-                                                           'B04_10']) > B3_B4_threshold), 1, 2)  # 1 for lakes, 2 for no lake
-
-            # #make the empirical relation
-            # utl.log('estimating empirical relations', log_level='INFO')
-            # # needs to have s2 values, classified as lake by ICESAT and by the NDWI
-            # empirical_index_green = np.where((classification_df['B04_10'] > 0) & (classification_df['NDWI_class'] == 1) & (classification_df['lake_rolling'] == 1))
-            # green_depth = (classification_df['surface_height'].iloc[empirical_index_green] - classification_df['bottom_height'].iloc[empirical_index_green]).values
-            # parameters_green, covariance_green = curve_fit(box_and_ski, classification_df['B04_10'].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
-            #                                                green_depth[np.logical_and(~np.isnan(green_depth), green_depth < 25)], p0=[1,0,1], maxfev=5000)
-            #
-            # # needs to have s2 values, classified as lake by ICESAT and by the NDWI
-            # empirical_index_red = np.where((classification_df['B03_10'] > 0) & (classification_df['NDWI_class'] == 1) & (classification_df['lake_rolling'] == 1))
-            # red_depth = (classification_df['surface_height'].iloc[empirical_index_red] - classification_df['bottom_height'].iloc[empirical_index_red]).values
-            # parameters_red, covariance_red = curve_fit(box_and_ski, classification_df['B03_10'].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
-            #                                            red_depth[np.logical_and(~np.isnan(red_depth), red_depth <25)], p0=[1,0,1], maxfev=5000)
-            #
-            # # calculate empirical depths
-            # classification_df['green'] = classification_df['surface_height'].iloc[empirical_index_green][np.logical_and(~np.isnan(green_depth), green_depth <25)] - \
-            #                              box_and_ski(classification_df['B04_10'].iloc[empirical_index_green][np.logical_and(~np.isnan(green_depth), green_depth <25)], **parameters_green)
-            #
-            # classification_df['red'] = classification_df['surface_height'].iloc[empirical_index_red] - \
-            #                              box_and_ski(classification_df['B03_10'].iloc[empirical_index_red], **parameters_red)
-            #
-            # # plot empirical relations
-            # fig, axs = plt.subplots(1,2)
-            # axs[0].scatter(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
-            #                green_depth[np.logical_and(~np.isnan(green_depth), green_depth <25)], s=0.5)
-            # axs[0].plot(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)],
-            #             box_and_ski(classification_df['B04_10'].iloc[empirical_index_green].values[np.logical_and(~np.isnan(green_depth), green_depth <25)], *parameters_green),
-            #             'g-', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_green))
-            # axs[0].set_ylabel('depth')
-            # axs[0].set_xlabel('Green reflectance')
-            #
-            # axs[1].scatter(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
-            #                red_depth[np.logical_and(~np.isnan(red_depth), red_depth <25)], s=0.5)
-            # axs[1].plot(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)],
-            #             box_and_ski(classification_df['B03_10'].iloc[empirical_index_red].values[np.logical_and(~np.isnan(red_depth), red_depth <25)], *parameters_red),
-            #             'r--', label='fit: a1=%5.3f, a2=%5.3f, a3=%5.3f' % tuple(parameters_red))
-            # axs[0].set_ylabel('depth')
-            # axs[0].set_xlabel('red reflectance')
-            #
-            # fig.suptitle('curve fit for Sentinel 2 red and green bands')
-            # plt.savefig('test.png')
-            # plt.close('all')
-
             utl.log('making confusion_matrix', log_level='INFO')
             # make confusion matrix
-            classification_df['CM'] = np.where(
-                (classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
-            classification_df['CM'][classification_df['CM'] == 0] = np.where(
-                (classification_df['lake_rolling'][classification_df['CM'] == 0] == 1) & (
-                            classification_df['NDWI_class'][classification_df['CM'] == 0] != 1), 2, 0)
-            classification_df['CM'][classification_df['CM'] == 0] = np.where(
-                (classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (
-                            classification_df['NDWI_class'][classification_df['CM'] == 0] != 1) & (
-                            classification_df['CM'] == 0), 3, 0)
-            classification_df['CM'][classification_df['CM'] == 0] = np.where(
-                (classification_df['lake_rolling'][classification_df['CM'] == 0] != 1) & (
-                            classification_df['NDWI_class'][classification_df['CM'] == 0] == 1) & (
-                            classification_df['CM'] == 0), 4, 0)
-
-            utl.log(
-                'True positives {}, False positives {}, True negatives {}, False Negatives {}'.format(classification_df['CM'].value_counts()[1],
-                                                                                                      classification_df['CM'].value_counts()[2],
-                                                                                                      classification_df['CM'].value_counts()[3],
-                                                                                                      classification_df['CM'].value_counts()[4]), log_level='INFO')
-
-            ### make some graphs
-            n_ph = len(classification_df)
-
-            start_index_array = np.arange(0, n_ph, ph_per_image)
-            end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
+            CM_tuple = get_confusion_matrix(classification_df)
 
             # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
             cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'cornflowerblue', 3: 'wheat', 4: 'red',
@@ -285,8 +300,11 @@ if __name__ == "__main__":
             # clusters - 1 lake in NDWI, 0 is nodata, 2 no lake
             result_map_surface = {1: 'Indigo', 0: 'dimgrey', 2: 'lightgrey', np.nan: 'dimgrey'}
             classification_df['c_surface'] = [result_map_surface[x] if not math.isnan(x) else result_map_surface[0]
-                                              for x in classification_df['NDWI_class']]
+                                              for x in classification_df['empirical_index']]
 
+            n_ph = len(classification_df)
+            start_index_array = np.arange(0, n_ph, ph_per_image)
+            end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
             for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
 
                 plt.ioff()
@@ -305,7 +323,7 @@ if __name__ == "__main__":
                     f1, ax1 = plt.subplots(figsize=(20, 20))
                     ax1.scatter(classification_df['distance'].iloc[index_slice],
                                 classification_df['height'].iloc[index_slice],
-                                c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.5)
+                                c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.5, alpha=0.25)
 
                     # plot bottom_line
                     points = np.array([classification_df['bottom_distance'].iloc[index_slice],
@@ -324,11 +342,11 @@ if __name__ == "__main__":
                     ax1.add_collection(colored_lines_surface)
 
                     # # plot empirical
-                    # ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['red'].iloc[index_slice], 'g')
-                    # ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['green'].iloc[index_slice], 'r')
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['red'].iloc[index_slice], 'r')
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice], classification_df['green'].iloc[index_slice], 'g')
 
-                    ax1.plot(classification_df['distance'].iloc[index_slice],
-                             classification_df['dem'].iloc[index_slice], 'r--')
+                    # ax1.plot(classification_df['distance'].iloc[index_slice],
+                    #          classification_df['dem'].iloc[index_slice], 'r--')
 
                     ax1.set_title('classification gt1l' + "- for photons {}".format(ph_start))
                     ax1.get_xaxis().set_tick_params(which='both', direction='in')
@@ -337,7 +355,7 @@ if __name__ == "__main__":
                     ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
 
                     outpath = os.path.join(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn),
-                                                        'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_mean.png'.format(
+                                                        'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_median.png'.format(
                                                             np.round(classification_df['lon'].iloc[index_slice].iloc[0],2),
                                                             np.round(classification_df['lat'].iloc[index_slice].iloc[0],2),
                                                             ph_start, np.round(classification_df['distance'].iloc[
