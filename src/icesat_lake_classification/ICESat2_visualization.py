@@ -20,6 +20,11 @@ def plot_classified_photons(data_df, clusters, ph_start, eps, outpath, add_line=
 
 
 def get_confusion_matrix (classification_df):
+    classification_df = classification_df.iloc[np.where((classification_df['SurfNoiseR'] > 2)
+                                                        & (classification_df['dem_diff'] < 25)
+                                                        & (classification_df['range'] < 200)
+                                                        & (classification_df['slope_mean'] < 0.1))]
+
     classification_df['CM'] = np.where(
         (classification_df['lake_rolling'] == 1) & (classification_df['NDWI_class'] == 1), 1, 0)
     classification_df['CM'][classification_df['CM'] == 0] = np.where(
