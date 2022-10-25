@@ -32,12 +32,12 @@ if __name__ == "__main__":
     for fn in in_fn_list:
         utl.log(os.path.basename(fn), log_level='INFO')
 
-    plot = False
-    save = True
+    plot = True
+    save = False
 
     ### Parameters
     ph_per_image = 25000
-    iteration_starter = 0
+    iteration_starter = 200
 
     # Step 1
     min_pts = 6
@@ -73,7 +73,7 @@ if __name__ == "__main__":
             data_df['distance'] = data_df['distance'] - min(data_df['distance'])
 
             if plot:
-                if not pth.check_existence(os.path.join(figures_dir, os.path.basename(fn)[:-4])):
+                if not pth.check_existence(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4])):
                     os.mkdir(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4]))
 
                 eps1_outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],'{}_Histogram_step_1'.format(

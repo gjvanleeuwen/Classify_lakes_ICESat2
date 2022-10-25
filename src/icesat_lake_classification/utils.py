@@ -277,7 +277,7 @@ def rollBy_per_item(what, basis, window, func):
     return rolled
 
 
-def rollBy(what, basis, window, func):
+def rollBy(what, basis, smoothing_window, sampling_window, func):
     """
 
     Parameters
@@ -299,14 +299,14 @@ def rollBy(what, basis, window, func):
     #note that basis must be sorted in order for this to work properly
     windows_min = basis.min()
     windows_max = basis.max()
-    window_starts = np.arange(windows_min, windows_max, window)
+    window_starts = np.arange(windows_min, windows_max, sampling_window)
     window_starts = pd.Series(window_starts,index=window_starts)
     indexed_what = pd.Series(what.values, index=basis.values)
 
     def applyToWindow(val):
         # using slice_indexer rather that what.loc [val:val+window] allows
         # window limits that are not specifically in the index
-        indexer = indexed_what.index.slice_indexer(val, val+window, 1)
+        indexer = indexed_what.index.slice_indexer(val, val+smoothing_window, 1)
         chunk = indexed_what.iloc[indexer]
         return func(chunk)
 
@@ -356,3 +356,8 @@ def rollBy_mode(what, basis, window, func, nodata=0):
 
 def printtime():
     return time.ctime()
+
+
+def perpendicular_distance(surface, bottom, slope):
+    depth = bottom-surface
+    return depth/(np.sqrt(1 + (slope**2)))

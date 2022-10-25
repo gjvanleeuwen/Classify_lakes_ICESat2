@@ -18,18 +18,17 @@ if __name__ == "__main__":
     figures_dir = os.path.join(base_dir, 'figures')
     data_dir = os.path.join(base_dir, 'data')
 
-    s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190617"
+    s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190617_L1C"
 
-    calculate_NDWI = True
+    calculate_NDWI = False
     calculate_NDWI_mask = False
     resample_SWIR = True
-    get_ROI = True
 
     overwrite_NDWI = False
     overwrite_NDWI_mask = False
     overwrite_SWIR = False
 
-    s2_band_list = ['B03_10', 'B04_10', 'B08_10'] # Green, Red, NIR, SWIR
+    s2_band_list = ['B03', 'B04', 'B08'] # Green, Red, NIR, SWIR
     NDWI_calc = '(A - B) / (A + B)'
     mask_calc = "A*logical_and(A>=0.21)"
 
@@ -71,13 +70,20 @@ if __name__ == "__main__":
 
         for subdir in s2_fn_list:
 
-            s2_files = pth.get_sorted_s2_filelist(subdir, band_list=['B03_10', 'B11_20'], recursive=True)
+            s2_files = pth.get_sorted_s2_filelist(subdir, band_list=['B03', 'B11', 'B12'], recursive=True)
             resample_fn = s2_files[0][:-11] + "B11_10m.tif"
+            resample_fn2 = s2_files[0][:-11] + "B12_10m.tif"
 
             if not pth.check_existence(resample_fn, overwrite=overwrite_SWIR):
-                utl.log("resampling the SWIR band for : {}".format(s2_files[1]), log_level='INFO')
+                utl.log("resampling the SWIR band - B11 - for : {}".format(s2_files[1]), log_level='INFO')
 
                 ds = gdal.Warp(resample_fn, s2_files[1], xRes=res, yRes=-res, format='GTIFF',
+                               creationOptions=['COMPRESS=LZW', 'TILED=YES'])
+                ds = None
+
+            if not pth.check_existence(resample_fn2, overwrite=overwrite_SWIR):
+                utl.log("resampling the SWIR band - B12 -  for : {}".format(s2_files[2]), log_level='INFO')
+                ds = gdal.Warp(resample_fn2, s2_files[2], xRes=res, yRes=-res, format='GTIFF',
                                creationOptions=['COMPRESS=LZW', 'TILED=YES'])
                 ds = None
 

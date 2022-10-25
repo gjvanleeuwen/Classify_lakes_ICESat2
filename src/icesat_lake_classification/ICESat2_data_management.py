@@ -4,6 +4,7 @@ import scipy
 
 from icesat2_toolkit.read_ICESat2_ATL03 import read_HDF5_ATL03
 
+import icesat_lake_classification.validation as validation
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
 
@@ -257,3 +258,133 @@ def get_background_rate (val):
 #         rows_list.append(dict1)
 #
 #     df = pd.DataFrame(rows_list)
+
+
+def add_surface_line(classification_df, window_size, sample_rate):
+    surface_df = classification_df.loc[classification_df['clusters'] == 2]
+    surface_df.sort_values('distance', inplace=True)
+    surface_line = pd.DataFrame(
+        utl.rollBy(surface_df['height'], surface_df['distance'], window_size, sample_rate,
+                   np.nanmedian))
+    result_index = [utl.find_nearest_sorted(surface_df['distance'].values, value) for value in surface_line.index]
+
+    surface_line['idx'] = surface_df['distance'].iloc[result_index].index
+    surface_line = surface_line.reset_index().set_index('idx')
+    surface_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
+    surface_line['distance'] = surface_line['distance'] + (window_size / 2)
+
+    surface_df_window = utl.interpolate_df_to_new_index(surface_df,
+                                                        surface_line.loc[:, ['distance', 'height']].copy(), 'distance')
+
+    df_interp = utl.interpolate_df_to_new_index(classification_df,
+                                                surface_df_window.loc[:, ['distance', 'height']].copy(),
+                                                'distance')
+
+    classification_df['surface_height'] = df_interp['height'].copy()
+    classification_df['surface_distance'] = df_interp['distance'].copy()
+
+    return classification_df
+
+
+def add_bottom_line(classification_df, window_size, sample_rate, buffer_bottom_line, refractive_index):
+    # calculate slope
+    classification_df['slope'] = np.abs((np.roll(classification_df['surface_height'], 1) - classification_df['surface_height']) / (
+                np.roll(classification_df['surface_distance'], 1) - classification_df['surface_distance']))  # abs(rise/run)
+
+    # calculate distance from surface for every photon
+    classification_df['ph_depth'] = utl.perpendicular_distance(classification_df['surface_height'], classification_df['height'],
+                                                       classification_df['slope'])
+
+    # adjust height of bottom photons and change clusters further - calculate difference between surface and bottom photons
+    bottom_index = np.where((classification_df['clusters'] == 3) & (classification_df['ph_depth'] < buffer_bottom_line))
+    # real height = surface - current_depth/1.33
+    classification_df['height'].iloc[bottom_index] = classification_df['surface_height'].iloc[bottom_index] - \
+                                                     (np.abs(
+                                                         classification_df['ph_depth'].iloc[bottom_index]) / refractive_index)
+    classification_df['clusters'].iloc[
+        np.where((classification_df['clusters'] == 3) & (classification_df['ph_depth'] < buffer_bottom_line))] = 5
+
+    # seperate bottom photons
+    bottom_df = classification_df.iloc[bottom_index].copy()
+
+    bottom_df.sort_values('distance', inplace=True)
+    bottom_line = pd.DataFrame(
+        utl.rollBy(bottom_df['height'], bottom_df['distance'], window_size, sample_rate,
+                   np.nanmedian))
+    result_index = [utl.find_nearest_sorted(bottom_df['distance'].values, value - (window_size)) for value in
+                    bottom_line.index]
+
+    bottom_line['idx'] = bottom_df['distance'].iloc[result_index].index
+    bottom_line = bottom_line.reset_index().set_index('idx')
+    bottom_line.rename(columns={'index': 'distance', 0: 'height'}, inplace=True)
+    bottom_line['distance'] = bottom_line['distance'] + (window_size / 2)
+
+    bottom_df_window = utl.interpolate_df_to_new_index(bottom_df,
+                                                       bottom_line.loc[:, ['distance', 'height']].copy(), 'distance')
+
+    bottom_df_interp = utl.interpolate_df_to_new_index(classification_df,
+                                                       bottom_df_window.loc[:, ['distance', 'height']].copy(),
+                                                       'distance')
+
+    classification_df['bottom_distance'] = bottom_df_interp['distance'].copy()
+    classification_df['bottom_height'] = bottom_df_interp['height'].copy()
+
+    return classification_df
+
+
+def calc_ph_statistics(classification_df, window_size=10000):
+    classification_df['SurfBottR'], classification_df['SurfNoiseR'], \
+    classification_df['range'], classification_df['slope_mean'], classification_df['dem_diff'] = 0, 0, 0, 0, 0
+
+    # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, 5 is real bottom
+    for i, (ph_start, ph_end) in enumerate(zip(np.arange(0, len(classification_df), window_size),
+                                               np.append(np.arange(window_size, len(classification_df), window_size),
+                                                         len(classification_df) - 1))):
+        index_slice = slice(ph_start, ph_end)
+
+        n_noise_ph = classification_df['clusters'].iloc[index_slice].value_counts()[0]  # 0 = noise
+        n_signal_ph = len(classification_df) - n_noise_ph
+        if 5 in classification_df['clusters'].iloc[index_slice].value_counts():
+            n_bottom_ph = classification_df['clusters'].iloc[index_slice].value_counts()[5]
+        else:
+            n_bottom_ph = 1  # bottom
+        if 2 in classification_df['clusters'].iloc[index_slice].value_counts():
+            n_surface_ph = classification_df['clusters'].iloc[index_slice].value_counts()[2]
+        else:
+            n_surface_ph = 1  # surface
+
+        classification_df['SurfBottR'].iloc[index_slice] = n_surface_ph / n_bottom_ph  # around 5...
+        classification_df['SurfNoiseR'].iloc[index_slice] = n_surface_ph / n_noise_ph  # around 5...
+        classification_df['range'].iloc[index_slice] = np.abs(
+            classification_df['height'].iloc[index_slice].max() - classification_df['height'].iloc[
+                index_slice].min())
+        classification_df['dem_diff'].iloc[index_slice] = np.max(
+            np.abs(classification_df['dem'].iloc[index_slice] - classification_df['height'].iloc[
+                index_slice]))
+        classification_df['slope_mean'].iloc[index_slice] = classification_df['slope'].iloc[
+            index_slice].mean()
+
+    return classification_df
+
+
+def classify_lake(classification_df, lake_boundary, slope_boundary, SNR_bound=2.5, SBR_bound=10, SBR_bound2=1):
+    classification_df['lake_diff'] = utl.perpendicular_distance(classification_df['surface_height'],
+                                                                classification_df['bottom_height'],
+                                                                classification_df['slope'])
+
+    classification_df['lake'] = np.where(
+        (classification_df['lake_diff'] < lake_boundary) & (np.abs(classification_df['slope']) < slope_boundary)
+        & (classification_df['SurfNoiseR'] > SNR_bound) & (classification_df['SurfBottR'] < SBR_bound)
+        & (classification_df['SurfBottR'] > SBR_bound2), 1, 0)
+    classification_df['lake'].iloc[np.where(
+        (classification_df['lake_diff'] < lake_boundary) & (np.abs(classification_df['slope']) >= slope_boundary)
+        & (classification_df['SurfNoiseR'] > SNR_bound) & (classification_df['SurfBottR'] < SBR_bound)
+        & (classification_df['SurfBottR'] > SBR_bound2))] = 2
+    classification_df['lake'].iloc[np.where(
+        (np.abs(classification_df['slope']) < slope_boundary) & (classification_df['lake_diff'] >= lake_boundary)
+        & (classification_df['SurfNoiseR'] > SNR_bound) & (classification_df['SurfBottR'] < SBR_bound)
+        & (classification_df['SurfBottR'] > SBR_bound2))] = 3
+
+    return classification_df
+
+
