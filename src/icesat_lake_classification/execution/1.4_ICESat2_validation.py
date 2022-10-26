@@ -14,7 +14,7 @@ if __name__ == "__main__":
     s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/{}".format(s2_date)
 
     base_dir = 'F:/onderzoeken/thesis_msc/'
-    overwrite_empirical = False
+    overwrite_empirical = True
 
     # Parameters
     plot_starter_index = 150
@@ -32,10 +32,11 @@ if __name__ == "__main__":
 
     cluster_fn_in_list = pth.get_files_from_folder(os.path.join(data_dir_in, 'cluster'), '*1222*gt*l*.csv')
 
-    depth_data_green_list, depth_data_red_list = [], []
-    green_reflectance_list, red_reflectance_list = [], []
+    depth_data_list = []
+    reflectance_list = [[] for band in  ['B03', "B04", "B08", "B11", "B12"]]
+
     # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, 5 = real bottom
-    for fn in cluster_fn_in_list:
+    for fn in cluster_fn_in_list[1:]:
         utl.log("Loading classification track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
         with utl.codeTimer('loading data'):
 
@@ -57,20 +58,21 @@ if __name__ == "__main__":
             #make the empirical relation
             utl.log('Retrieving data for the empirical relations', log_level='INFO')
             with utl.codeTimer('empirical'):
-                empirical_index_green = np.where((classification_df['B03'] > 0) & (classification_df['valid_point_index'] > 0))
-                green_depth = -1 * classification_df['lake_diff'].iloc[empirical_index_green].values
-                depth_index_green = np.where((~np.isnan(green_depth)) & (green_depth < 25) & (green_depth > 0))
+                empirical_index= np.where((classification_df['B03'] > 0) & (classification_df['B04'] > 0) & (classification_df['B11'] > 0) &
+                                          (classification_df['valid_point_index'] > 0))
+                depth = -1 * classification_df['lake_diff'].iloc[empirical_index].values
+                depth_index = np.where((~np.isnan(depth)) & (depth < 25) & (depth > 0))
 
-                empirical_index_red = np.where((classification_df['B04'] > 0) & (classification_df['valid_point_index'] > 0))
-                red_depth = -1 * classification_df['lake_diff'].iloc[empirical_index_red].values
-                depth_index_red = np.where((~np.isnan(red_depth)) & (red_depth < 25) & (red_depth > 0))
+                for i, band in enumerate(['B03', "B04", "B08", "B11", "B12"]):
+                    reflectance_list[i] += list(
+                        classification_df[band].iloc[empirical_index].values[depth_index])
+                depth_data_list += list(depth[depth_index])
 
-                depth_data_green_list += list(green_depth[depth_index_green])
-                depth_data_red_list += list(red_depth[depth_index_red])
 
-                green_reflectance_list += list(classification_df['B04'].iloc[empirical_index_green].values[depth_index_green])
-                red_reflectance_list += list(classification_df['B03'].iloc[empirical_index_red].values[depth_index_red])
+    utl.log('Saving data for the empirical relation', log_level='INFO')
+    df_dict = {'depth': depth_data_list}
+    for i, band in enumerate(['B03', "B04", "B08", "B11", "B12"]):
+        df_dict.update({band : reflectance_list[i]})
 
-        utl.log('Saving data for the empirical relation', log_level='INFO')
-        pd.DataFrame({'depth':depth_data_green_list, 'reflectance': green_reflectance_list}).to_csv(os.path.join(data_dir, 'empirical', pth.get_filname_without_extension(fn)[0:44] + '_green.csv'))
-        pd.DataFrame({'depth': depth_data_red_list, 'reflectance': red_reflectance_list}).to_csv(os.path.join(data_dir, 'empirical', pth.get_filname_without_extension(fn)[0:44] + '_red.csv'))
+    df = pd.DataFrame(df_dict)
+    df.to_csv(os.path.join(data_dir, 'empirical', pth.get_filname_without_extension(fn)[0:44] + '.csv'))

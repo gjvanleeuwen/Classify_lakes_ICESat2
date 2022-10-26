@@ -38,9 +38,9 @@ if __name__ == "__main__":
 
     if empirical:
         utl.log('Plotting the Empirical relations', log_level='INFO')
-        empirical_df_red = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*green.csv')[0])
-        empirical_df_green = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*red.csv')[0])
-        parameters_green, parameters_red, parameters_green_physical, parameters_red_physical = validation.estimate_relations(empirical_df_green, empirical_df_red)
+        empirical_df = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*.csv')[0])
+
+        parameters_green, parameters_red, parameters_green_physical, parameters_red_physical, model = validation.estimate_relations(empirical_df, ['B03', "B04", "B08", "B11", "B12"])
 
     for fn in classification_df_fn_list:
 
@@ -56,20 +56,13 @@ if __name__ == "__main__":
         del s2_df
 
         classification_df['NDWI_class'] = 0  # nodata value
-        classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold), 1,
-                                                   2)  # 1 for lakes, 2 for no lake
-
-        classification_df['valid_point_index'] = np.where(
-            (classification_df['NDWI_10m'] > NDWI_threshold) & (classification_df['lake_rolling'] == 1) & (
-                    classification_df['SurfBottR'] > 1) & (classification_df['SurfNoiseR'] > 2.5) & (
-                    classification_df['SurfBottR'] < 10) & (classification_df['dem_diff'] < 400) & (
-                    classification_df['range'] < 400) & (classification_df['slope_mean'] < 0.1), 1, 0)
+        classification_df['NDWI_class'] = np.where((classification_df['NDWI_10m'] > NDWI_threshold), 1,2)  # 1 for lakes, 2 for no lake
 
         if empirical:
             utl.log('Calculating empircal/physical depth lines for the plot', log_level='INFO')
 
             classification_df = validation.calculate_depth_from_relations(classification_df,parameters_green, parameters_red,
-                                                                          parameters_green_physical, parameters_red_physical)
+                                                                          parameters_green_physical, parameters_red_physical, model, ['B03', "B04", "B08", "B11", "B12"])
 
         if not pth.check_existence(os.path.join(figures_dir, 'final')):
             os.mkdir(os.path.join(figures_dir, 'final'))
@@ -86,8 +79,6 @@ if __name__ == "__main__":
         # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
         cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'cornflowerblue', 3: 'wheat', 4: 'red',
                        5: 'mediumaquamarine'}
-        cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'darkgrey', 3: 'darkgrey', 4: 'darkgrey',
-                       5: 'darkgrey'}
         classification_df['c_cluster'] = [cluster_map[x] if not math.isnan(x) else cluster_map[0] for x in
                                           classification_df['clusters']]
 
@@ -98,7 +89,6 @@ if __name__ == "__main__":
 
         # clusters - 1 lake in NDWI, 0 is nodata, 2 no lake
         result_map_surface = {1: 'Indigo', 0: 'dimgrey', 2: 'lightgrey', np.nan: 'dimgrey'}
-        result_map_surface = {1: 'dimgrey', 0: 'dimgrey', 2: 'lightgrey', np.nan: 'dimgrey'}
         classification_df['c_surface'] = [result_map_surface[x] if not math.isnan(x) else result_map_surface[0]
                                           for x in classification_df['NDWI_class']]
 

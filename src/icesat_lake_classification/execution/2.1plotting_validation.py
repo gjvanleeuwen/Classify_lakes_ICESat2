@@ -6,8 +6,6 @@ from sklearn.metrics import r2_score
 
 import matplotlib.pyplot as plt
 
-from scipy.optimize import curve_fit
-
 import icesat_lake_classification.validation as validation
 import icesat_lake_classification.utils as utl
 import icesat_lake_classification.path_utils as pth
@@ -26,24 +24,27 @@ if __name__ == "__main__":
     figures_dir = os.path.join(base_dir, 'figures', s2_date)
     data_dir = os.path.join(base_dir, 'data', s2_date)
 
-    classification_df_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'classification'), '*1222*gt*l*.h5')
+    classification_df_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'classification'), '*1222*gt1l*.h5')
 
     ## Processing
     if not pth.check_existence(os.path.join(figures_dir, 'final')):
         os.mkdir(os.path.join(figures_dir, 'final'))
 
     utl.log('Plotting the Empirical relations', log_level='INFO')
-    empirical_df_red = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*green.csv')[0])
-    empirical_df_green = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*red.csv')[0])
+    empirical_df = pd.read_csv(pth.get_files_from_folder(os.path.join(data_dir, 'empirical'),'*1222*.csv')[0])
+    empirical_df = empirical_df.groupby('B03', as_index=False).first()
 
-    parameters_green, parameters_red, parameters_green_physical, parameters_red_physical = validation.estimate_relations(
-        empirical_df_green, empirical_df_red)
+    validation.estimate_relations_CV(empirical_df, ['B03', "B04", "B08", "B11", "B12"], folds=5)
+
+    parameters_green, parameters_red, parameters_green_physical, parameters_red_physical, model = validation.estimate_relations(empirical_df, ['B03', "B04", "B08", "B11", "B12"])
 
     depth_data_green_list, depth_data_red_list = [], []
     depth_data_green_list_physical, depth_data_red_list_physical = [], []
-    depth_data_ICESAT2_list = []
+    depth_data_ICESAT2_list, depth_data_ML_list = [], []
 
-    for fn in classification_df_fn_list:
+    for i, fn in enumerate(classification_df_fn_list):
+        # if i >0:
+        #     continue
         utl.log("Loading classification track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
         with utl.codeTimer('loading data'):
 
@@ -64,18 +65,28 @@ if __name__ == "__main__":
         utl.log('Calculating empircal/physical depth lines for the plot', log_level='INFO')
         classification_df = validation.calculate_depth_from_relations (classification_df,
                                     parameters_green, parameters_red, parameters_green_physical,
-                                    parameters_red_physical)
+                                    parameters_red_physical, model, ['B03', "B04", "B08", "B11", "B12"])
 
-        # plot empirical relations to training data
+        depth_data_green_list += list(classification_df['surface_height'][classification_df['valid_point_index'] == 1] - classification_df['green'][classification_df['valid_point_index'] == 1])
+        depth_data_red_list += list(classification_df['surface_height'][classification_df['valid_point_index'] == 1] - classification_df['red'][classification_df['valid_point_index'] == 1])
+        depth_data_green_list_physical += list(classification_df['surface_height'][classification_df['valid_point_index'] == 1] - classification_df['green_phys'][classification_df['valid_point_index'] == 1])
+        depth_data_red_list_physical += list(classification_df['surface_height'][classification_df['valid_point_index'] == 1] - classification_df['red_phys'][classification_df['valid_point_index'] == 1])
+        depth_data_ICESAT2_list += list(classification_df['surface_height'][classification_df['valid_point_index'] == 1] - classification_df['bottom_height'][classification_df['valid_point_index'] == 1])
+        depth_data_ML_list += list(classification_df['ML'][classification_df['valid_point_index'] == 1])
+
+
+        #################           PLOTTING
+
+        # plot empirical relations to training data - Green
         fig, ax = plt.subplots(1,1)
-        ax.scatter(empirical_df_green['reflectance'], empirical_df_green['depth'], color='dimgrey', s=1, alpha=0.01, marker='+')
+        ax.scatter(empirical_df['B03'], empirical_df['depth'], color='dimgrey', s=1,  marker='+')
         ax.plot(np.arange(0, 6000), validation.box_and_ski(np.arange(0, 6000), *parameters_green),
-                    'mediumseagreen', label='Empirical R^2 {}'.format(np.round(r2_score(empirical_df_green['depth'], validation.box_and_ski(empirical_df_green['reflectance'], *parameters_green)), 2)))
+                    'mediumseagreen', label='Empirical R^2 {}'.format(np.round(r2_score(empirical_df['depth'], validation.box_and_ski(empirical_df['B03'], *parameters_green)), 2)))
 
         ax.plot(np.arange(0.5, 6000.5),
                     validation.physical_single_channel_green(np.arange(0, 6000)/10000, parameters_green_physical[0]),
-                    'tab:olive',  label='Physical R^2 {}'.format(np.round(r2_score(empirical_df_green['depth'].iloc[np.where(np.isfinite(validation.physical_single_channel_green(empirical_df_green['reflectance']/10000, 0.55)))],
-                                                                                   validation.physical_single_channel_green((empirical_df_green['reflectance']/10000).iloc[np.where(np.isfinite(validation.physical_single_channel_green(empirical_df_green['reflectance']/10000, 0.55)))],
+                    'tab:olive',  label='Physical R^2 {}'.format(np.round(r2_score(empirical_df['depth'].iloc[np.where(np.isfinite(validation.physical_single_channel_green(empirical_df['B03']/10000, 0.55)))],
+                                                                                   validation.physical_single_channel_green((empirical_df['B03']/10000).iloc[np.where(np.isfinite(validation.physical_single_channel_green(empirical_df['B03']/10000, 0.55)))],
                                                                                                                  *parameters_green_physical)), 2)))
         ax.set_xlabel('Green reflectance e^4')
         ax.set_ylabel('depth (m)')
@@ -83,19 +94,19 @@ if __name__ == "__main__":
         ax.set_ylim([0, 15])
 
         ax.legend(loc='upper right')
-        # axs[0].set_title('Relations')
         plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_S2_{}_green.png'.format('1222_20190617', s2_date)))
         plt.close('all')
 
+        ## Red
         fig, ax = plt.subplots(1)
-        ax.scatter(empirical_df_red['reflectance'], empirical_df_red['depth'], color='tab:grey', s=1, alpha=0.01, marker='+')
+        ax.scatter(empirical_df['B04'], empirical_df['depth'], color='tab:grey', s=1,marker='+')
         ax.plot(np.arange(0, 8000),
                     validation.box_and_ski(np.arange(0, 8000), *parameters_red),
-                    'maroon',  label='Empirical R^2 {}'.format(np.round(r2_score(empirical_df_red['depth'], validation.box_and_ski(empirical_df_red['reflectance'], *parameters_red)), 2)))
+                    'maroon',  label='Empirical R^2 {}'.format(np.round(r2_score(empirical_df['depth'], validation.box_and_ski(empirical_df['B04'], *parameters_red)), 2)))
         ax.plot(np.arange(0.5, 8000.5),
                     validation.physical_single_channel_red(np.arange(0.5, 8000.5)/10000, parameters_red_physical[0]),
-                    'orangered', label='Physical R^2 {}'.format(np.round(r2_score(empirical_df_red['depth'].iloc[np.where(np.isfinite(validation.physical_single_channel_red(empirical_df_red['reflectance']/10000, 0.55)))],
-                                                                                   validation.physical_single_channel_red((empirical_df_red['reflectance']/10000).iloc[np.where(np.isfinite(validation.physical_single_channel_red(empirical_df_red['reflectance']/10000, 0.55)))],
+                    'orangered', label='Physical R^2 {}'.format(np.round(r2_score(empirical_df['depth'].iloc[np.where(np.isfinite(validation.physical_single_channel_red(empirical_df['B04']/10000, 0.55)))],
+                                                                                   validation.physical_single_channel_red((empirical_df['B04']/10000).iloc[np.where(np.isfinite(validation.physical_single_channel_red(empirical_df['B04']/10000, 0.55)))],
                                                                                                                  *parameters_red_physical)), 2)))
         ax.set_ylabel('depth (m)')
         ax.set_xlabel('red reflectance e^4)')
@@ -107,17 +118,30 @@ if __name__ == "__main__":
         plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_S2_{}_red.png'.format('1222_20190617', s2_date)))
         plt.close('all')
 
-        depth_data_green_list += list(classification_df['surface_height'].iloc[classification_df['valid_point_index']] - classification_df['green'].iloc[classification_df['valid_point_index']])
-        depth_data_red_list += list(classification_df['surface_height'].iloc[classification_df['valid_point_index']] - classification_df['red'].iloc[classification_df['valid_point_index']])
-        depth_data_green_list_physical += list(classification_df['surface_height'].iloc[classification_df['valid_point_index']] - classification_df['green_phys'].iloc[classification_df['valid_point_index']])
-        depth_data_red_list_physical += list(classification_df['surface_height'].iloc[classification_df['valid_point_index']] - classification_df['red_phys'].iloc[classification_df['valid_point_index']])
-        depth_data_ICESAT2_list += list(classification_df['surface_height'].iloc[classification_df['valid_point_index']] - classification_df['bottom_height'].iloc[classification_df['valid_point_index']])
+        # machine learning
+        fig, ax = plt.subplots(1)
+        ax.scatter(empirical_df['B04'], empirical_df['depth'], color='tab:grey', s=1, marker='+')
+        ax.scatter(empirical_df['B04'], model.predict(empirical_df[['B03', "B04", "B08", "B11", "B12"]]),
+                color='maroon', s=1, alpha=0.01, marker='+', label='Empirical R^2 {}'.format(
+                np.round(r2_score(empirical_df['depth'], model.predict(empirical_df[['B03', "B04", "B08", "B11", "B12"]])), 2)))
+
+        ax.set_ylabel('depth (m)')
+        ax.set_xlabel('red reflectance e^4)')
+        ax.set_xlim([0, 6000])
+        ax.set_ylim([0, 15])
+
+        ax.legend(loc='upper right')
+        ax.set_title('curve fit for Sentinel 2 red and green bands')
+        plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_S2_{}_ML.png'.format('1222_20190617', s2_date)))
+        plt.close('all')
+
 
     depth_data_green_list_physical = np.array(depth_data_green_list_physical)
     depth_data_red_list_physical = np.array(depth_data_red_list_physical)
     depth_data_green_list = np.array(depth_data_green_list)
     depth_data_red_list = np.array(depth_data_red_list)
     depth_data_ICESAT2_list = np.array(depth_data_ICESAT2_list)
+    depth_data_ML_list = np.array(depth_data_ML_list)
 
 
     # plot empirical relations to training data
@@ -138,6 +162,7 @@ if __name__ == "__main__":
     plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_red_ICESAT_S2_{}.png'.format('1222_20190617', s2_date)))
     plt.close('all')
 
+    # red
     fig, ax = plt.subplots(1)
     nan_index1 = np.where((~np.isnan(depth_data_ICESAT2_list)) & (~np.isnan(depth_data_green_list)))
     ax.scatter(depth_data_ICESAT2_list, depth_data_green_list, color='maroon', s=1, alpha=0.01, marker='+',
@@ -172,5 +197,20 @@ if __name__ == "__main__":
     ax.legend(loc='upper right')
     # ax.set_title('curve fit for Sentinel 2 red and green bands')
     plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_combined_ICESAT_S2_{}.png'.format('1222_20190617', s2_date)))
+    plt.close('all')
+
+    ## Machine
+    fig, ax = plt.subplots(1)
+    nan_index1 = np.where((~np.isnan(depth_data_ICESAT2_list)) & (~np.isnan(depth_data_green_list)))
+    ax.scatter(depth_data_ICESAT2_list, depth_data_ML_list, color='maroon', s=1, alpha=0.01, marker='+',
+               label='Empirical R^2 {}'.format(np.round(r2_score(depth_data_ICESAT2_list[nan_index1], depth_data_ML_list[nan_index1]),2)))
+    ax.set_xlabel('ICESat-2 depth (m)')
+    ax.set_ylabel('Empirical/Physical S2 depth (m)')
+    ax.set_xlim([0, np.max(depth_data_ICESAT2_list)])
+    ax.set_ylim([0, np.max(depth_data_ML_list)])
+
+    ax.legend(loc='upper right')
+    # ax.set_title('curve fit for Sentinel 2 red and green bands')
+    plt.savefig(os.path.join(figures_dir, 'Empirical_fit_{}_ML_ICESAT_S2_{}.png'.format('1222_20190617', s2_date)))
     plt.close('all')
 
