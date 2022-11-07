@@ -20,9 +20,10 @@ if __name__ == "__main__":
     utl.set_log_level(log_level='INFO')
     pd.options.mode.chained_assignment = None  # default='warn'
 
-    plot_starter_index = 200
+    plot_starter_index = 0
+    plot_end_index = 1000
     ph_per_image = 25000
-    empirical = True
+    empirical = False
     NDWI_threshold = 0.21
 
     s2_band_list = ['NDWI_10m', 'B03', "B04", "B08", "B11", "B12"]
@@ -34,7 +35,7 @@ if __name__ == "__main__":
     if not pth.check_existence(os.path.join(figures_dir, 'final')):
         os.mkdir(os.path.join(figures_dir, 'final'))
 
-    classification_df_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'classification'), '*1222*gt1l*.h5')
+    classification_df_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'classification'), '*1108*gt*l*.h5')
 
     if empirical:
         utl.log('Plotting the Empirical relations', log_level='INFO')
@@ -72,19 +73,18 @@ if __name__ == "__main__":
 
         utl.log('making confusion_matrix', log_level='INFO')
         # make confusion matrix
-        CM_tuple = get_confusion_matrix(classification_df)
-        CM_tuple2 = get_confusion_matrix2(classification_df)
+        # CM_tuple = get_confusion_matrix(classification_df)
+        # CM_tuple2 = get_confusion_matrix2(classification_df)
 
         utl.log('Making color map', log_level='INFO')
         # clusters - 0 noise, - 1 signal, 2= surface, - 3 bottom, #photons close to surface =4, bottom sure = 5
-        cluster_map = {1: 'darkgrey', 0: 'bisque', 2: 'cornflowerblue', 3: 'wheat', 4: 'red',
-                       5: 'mediumaquamarine'}
+        cluster_map = {0: 'Tan', 1: 'darkgrey', 2: 'darkgrey', 3: 'cornflowerblue', 4 : 'skyblue' , 5: 'cornflowerblue'}
         classification_df['c_cluster'] = [cluster_map[x] if not math.isnan(x) else cluster_map[0] for x in
                                           classification_df['clusters']]
 
         # clusters - 1 Lake, 0 no lake, 2, deep enough but to steep, 3 not deep enough but flat
-        result_map_bottom = {1: 'Indigo', 0: 'dimgrey', 2: 'darkviolet', 3: 'violet', np.nan: 'dimgrey'}
-        classification_df['c_bottom'] = [result_map_bottom[x] if not math.isnan(x) else result_map_bottom[0] for
+        result_map_bottom = {1: 'Indigo', 0: 'dimgrey', 2: 'darkviolet', 3: 'violet', np.nan: 'dimgrey', 10 : 'red'}
+        classification_df['c_bottom'] = [result_map_bottom[x] if not math.isnan(x) else result_map_bottom[10] for
                                          x in classification_df['lake_rolling']]
 
         # clusters - 1 lake in NDWI, 0 is nodata, 2 no lake
@@ -97,38 +97,41 @@ if __name__ == "__main__":
         end_index_array = np.append(np.arange(ph_per_image, n_ph, ph_per_image), n_ph - 1)
         for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
 
+            # print(classification_df['SurfNoiseR'].iloc[np.where((classification_df['lon'] < -49.559) & (classification_df['lat'] > 70.219))])
+            # print(classification_df['SurfBottR'].iloc[np.where((classification_df['lon'] < -49.559) & (classification_df['lat'] > 70.219))])
+
             plt.ioff()
             utl.log("Iterating through track -  {}/{} - Photon count {}".format(int(ph_start / ph_per_image) + 1,
                                                                             len(start_index_array),
                                                                             ph_start), log_level='INFO')
 
             index_slice = slice(ph_start, ph_end)
-            if (i > plot_starter_index) & ((1 in classification_df['NDWI_class'].iloc[index_slice].unique()) & (
+            if (i > plot_starter_index) & (i < plot_end_index) & ((1 in classification_df['NDWI_class'].iloc[index_slice].unique()) | (
                     1 in classification_df['lake_rolling'].iloc[index_slice].unique())):
 
                 utl.log("Conditions apply - Plotting this graph- {}".format(
                     classification_df['NDWI_class'].iloc[index_slice].unique()), log_level='INFO')
 
-                f1, ax1 = plt.subplots(figsize=(15, 12.5))
-                ax1.scatter(classification_df['distance'].iloc[index_slice],
+                f1, ax1 = plt.subplots(figsize=(10, 10))
+                ax1.scatter(classification_df['distance'].iloc[index_slice] - np.min(classification_df['distance'].iloc[index_slice].values),
                             classification_df['height'].iloc[index_slice],
-                            c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.5)
+                            c=classification_df['c_cluster'].iloc[index_slice], marker=',', s=0.3)
 
                 if empirical:
                     # plot empirical
-                    ax1.plot(classification_df['surface_distance'].iloc[index_slice],
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice] - np.min(classification_df['surface_distance'].iloc[index_slice].values),
                              classification_df['red'].iloc[index_slice], 'mediumseagreen', label='Empirical - B03')
-                    ax1.plot(classification_df['surface_distance'].iloc[index_slice],
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice] - np.min(classification_df['surface_distance'].iloc[index_slice].values),
                              classification_df['green'].iloc[index_slice], 'maroon' , label='Empirical - B04')
 
                     # plot physical
-                    ax1.plot(classification_df['surface_distance'].iloc[index_slice],
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice] - np.min(classification_df['surface_distance'].iloc[index_slice].values),
                              classification_df['red_phys'].iloc[index_slice], 'tab:olive', label='Physical - B03')
-                    ax1.plot(classification_df['surface_distance'].iloc[index_slice],
+                    ax1.plot(classification_df['surface_distance'].iloc[index_slice] - np.min(classification_df['surface_distance'].iloc[index_slice].values),
                              classification_df['green_phys'].iloc[index_slice], 'orangered' , label='Physical - B04')
 
                 # plot bottom_line
-                points = np.array([classification_df['bottom_distance'].iloc[index_slice],
+                points = np.array([classification_df['bottom_distance'].iloc[index_slice] - np.min(classification_df['bottom_distance'].iloc[index_slice].values),
                                    classification_df['bottom_height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
                 lines = np.concatenate([points[:-1], points[1:]], axis=1)
                 colored_lines = LineCollection(lines, colors=classification_df['c_bottom'].iloc[index_slice],
@@ -136,7 +139,7 @@ if __name__ == "__main__":
                 ax1.add_collection(colored_lines)
 
                 # plot surface line
-                points_surface = np.array([classification_df['surface_distance'].iloc[index_slice],
+                points_surface = np.array([classification_df['surface_distance'].iloc[index_slice] - np.min(classification_df['surface_distance'].iloc[index_slice].values),
                                            classification_df['surface_height'].iloc[index_slice]]).T.reshape(-1, 1, 2)
                 lines_surface = np.concatenate([points_surface[:-1], points_surface[1:]], axis=1)
                 colored_lines_surface = LineCollection(lines_surface,
@@ -147,18 +150,22 @@ if __name__ == "__main__":
                 # ax1.plot(classification_df['distance'].iloc[index_slice],
                 #          classification_df['dem'].iloc[index_slice], 'r--')
 
+                ax1.set_ylim(np.median(classification_df['height'].iloc[index_slice].values) - 20, np.median(classification_df['height'].iloc[index_slice].values) + 20)
+                ax1.set_xlim(np.min(classification_df['distance'].iloc[index_slice].values - np.min(classification_df['distance'].iloc[index_slice].values)),
+                             np.max(classification_df['distance'].iloc[index_slice].values - np.min(classification_df['distance'].iloc[index_slice].values)))
+
                 ax1.set_title('')
-                ax1.get_xaxis().set_tick_params(which='both', direction='in')
-                ax1.get_yaxis().set_tick_params(which='both', direction='in')
-                ax1.set_xlabel('Along-track distance [m]')
-                ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]')
-                ax1.legend(loc='upper right')
+                ax1.get_xaxis().set_tick_params(which='both', direction='in', labelsize=16)
+                ax1.get_yaxis().set_tick_params(which='both', direction='in', labelsize=16)
+                ax1.set_xlabel('Along-track distance [m]', fontsize=22)
+                ax1.set_ylabel('Elevation above WGS84 Ellipsoid [m]', fontsize=22)
+                # ax1.legend(loc='upper right')
 
                 outpath = os.path.join(os.path.join(figures_dir, 'final', pth.get_filname_without_extension(fn),
-                                                    'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_median.png'.format(
+                                                    'lake_classification_s2_lon_{}_lat_{}_ph_{}_distance_median_{}___{}.png'.format(
                                                         np.round(classification_df['lon'].iloc[index_slice].iloc[0], 2),
                                                         np.round(classification_df['lat'].iloc[index_slice].iloc[0], 2),
                                                         2, np.round(classification_df['distance'].iloc[
-                                                                               index_slice].iloc[0], 2))))
+                                                                               index_slice].iloc[0], 2), ph_start, ph_end)))
                 plt.savefig(outpath)
                 plt.close('all')

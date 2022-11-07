@@ -20,15 +20,15 @@ if __name__ == "__main__":
 
     s2_data_dir = "F:/onderzoeken/thesis_msc/data/Sentinel/20190617_L1C"
 
-    calculate_NDWI = False
+    calculate_NDWI = True
     calculate_NDWI_mask = False
-    resample_SWIR = True
+    resample_SWIR = False
 
-    overwrite_NDWI = False
+    overwrite_NDWI = True
     overwrite_NDWI_mask = False
     overwrite_SWIR = False
 
-    s2_band_list = ['B03', 'B04', 'B08'] # Green, Red, NIR, SWIR
+    s2_band_list = ['B03', 'B04', 'B08', 'B02'] # Green, Red, NIR, blue
     NDWI_calc = '(A - B) / (A + B)'
     mask_calc = "A*logical_and(A>=0.21)"
 
@@ -38,8 +38,8 @@ if __name__ == "__main__":
 
         s2_files = pth.get_sorted_s2_filelist(subdir, band_list=s2_band_list, recursive=True)
 
-        NDWI_raster_dict = {'A': s2_files[0],
-                            'B': s2_files[2]}
+        NDWI_raster_dict = {'A': s2_files[3],
+                            'B': s2_files[1]}
         NDWI_fn = s2_files[0][:-11] + "NDWI_10m.tif"
 
         if calculate_NDWI:

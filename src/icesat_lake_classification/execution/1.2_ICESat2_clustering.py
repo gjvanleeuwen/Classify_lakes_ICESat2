@@ -26,7 +26,7 @@ if __name__ == "__main__":
     if not pth.check_existence(os.path.join(figures_dir, 'class')):
         os.mkdir(os.path.join(figures_dir, 'class'))
 
-    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*1222*gt*')
+    in_fn_list = pth.get_files_from_folder(os.path.join(data_dir, 'ICESat2_csv'), '*11*gt*l*') #1222 1169
 
     utl.log('processing these files:', log_level='INFO')
     for fn in in_fn_list:
@@ -37,12 +37,13 @@ if __name__ == "__main__":
 
     ### Parameters
     ph_per_image = 25000
-    iteration_starter = 200
+    iteration_starter = 100
+    iteration_end = 600
 
     # Step 1
     min_pts = 6
     eps_method = 'max'
-    strict_step1 = 1
+    strict_step1 = 1.5
 
     # Step 2
     min_pts_step2 = 3
@@ -62,9 +63,6 @@ if __name__ == "__main__":
 
         for i, (ph_start, ph_end) in enumerate(zip(start_index_array, end_index_array)):
 
-            if i < iteration_starter:
-                continue
-
             index_slice = slice(ph_start,ph_end)
             utl.log("Classify slice {}/{}".format(int(ph_start/ph_per_image),len(start_index_array)), log_level='INFO')
 
@@ -73,11 +71,15 @@ if __name__ == "__main__":
             data_df['distance'] = data_df['distance'] - min(data_df['distance'])
 
             if plot:
-                if not pth.check_existence(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4])):
-                    os.mkdir(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4]))
+                if i > iteration_starter and i < iteration_end:
 
-                eps1_outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],'{}_Histogram_step_1'.format(
-                                                             ph_start))
+                    if not pth.check_existence(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4])):
+                        os.mkdir(os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4]))
+
+                    eps1_outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],'{}_Histogram_step_1'.format(
+                                                                 ph_start))
+                else:
+                    eps1_outpath = None
             else:
                 eps1_outpath = None
             eps1 = find_optimal_eps(data_df, min_pts=min_pts, method=eps_method,
@@ -87,18 +89,23 @@ if __name__ == "__main__":
             data_df['clusters'] = np.where(np.array(clustering.labels_) >= 0, 1, 0)  # signal = 1
 
             if plot:
-                outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],
-                                       '{}_classification_step_1.png'.format(ph_start))
-                plot_classified_photons(data_df, data_df['clusters'], ph_start, eps1, outpath)
-                plt.close('all')
+                if i > iteration_starter and i < iteration_end:
+
+                        outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],
+                                               '{}_classification_step_1.png'.format(ph_start))
+                        plot_classified_photons(data_df, data_df['clusters'], ph_start, eps1, outpath)
+                        plt.close('all')
 
             ### step 2 --> eliminate surface
             data_df2 = data_df.loc[data_df['clusters'] > 0]
             noise_df = data_df.loc[data_df['clusters'] == 0]
 
             if plot:
-                eps2_outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],'{}_Histogram_step_2'.format(
+                if i > iteration_starter and i < iteration_end:
+                    eps2_outpath = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],'{}_Histogram_step_2'.format(
                                                              ph_start))
+                else:
+                    eps2_outpath = None
             else:
                 eps2_outpath = None
             eps2 = find_optimal_eps(data_df2, min_pts=min_pts_step2, method=eps_method2,
@@ -109,14 +116,15 @@ if __name__ == "__main__":
             classification_df['clusters'].iloc[index_slice] = data_df['clusters']
 
             if plot:
-                outpath2 = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],
-                                       '{}_classification_step_2.png'.format(ph_start))
-                plot_classified_photons(data_df, data_df['clusters'], ph_start, eps2, outpath2)
-                plt.close('all')
+                if i > iteration_starter and i < iteration_end:
+                    outpath2 = os.path.join(figures_dir, 'class', os.path.basename(fn)[:-4],
+                                           '{}_classification_step_2.png'.format(ph_start))
+                    plot_classified_photons(data_df, data_df['clusters'], ph_start, eps2, outpath2)
+                    plt.close('all')
 
         if save:
             utl.log("Saving classification result for track/beam: {}".format(os.path.basename(fn)[:-4]), log_level='INFO')
-            classification_df.to_csv(os.path.join(data_dir, 'cluster', (os.path.basename(fn))))
+            classification_df.to_hdf(os.path.join(data_dir, 'cluster', pth.get_filname_without_extension(fn) + '.h5'), key='df', mode='w')
 
 
 

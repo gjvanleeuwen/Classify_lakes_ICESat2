@@ -367,7 +367,7 @@ def calc_ph_statistics(classification_df, window_size=10000):
     return classification_df
 
 
-def classify_lake(classification_df, lake_boundary, slope_boundary, SNR_bound=2.5, SBR_bound=10, SBR_bound2=1):
+def classify_lake(classification_df, lake_boundary, slope_boundary, SNR_bound=0.5, SBR_bound=100, SBR_bound2=0.5):
     classification_df['lake_diff'] = utl.perpendicular_distance(classification_df['surface_height'],
                                                                 classification_df['bottom_height'],
                                                                 classification_df['slope'])

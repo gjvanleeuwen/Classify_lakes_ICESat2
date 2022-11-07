@@ -14,7 +14,7 @@ if __name__ == "__main__":
     data_dir = 'F:/onderzoeken/thesis_msc/data/ICESat2'
     outdir = 'F:/onderzoeken/thesis_msc/data/ICESat2_csv'
 
-    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*1222*.h5')
+    track_fn_list = pth.get_files_from_folder(data_dir, '*ATL03*1169*.h5') # '1108', '1169'
     utl.log(track_fn_list, log_level='INFO')
 
     for fn in track_fn_list:

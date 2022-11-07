@@ -35,11 +35,18 @@ def find_optimal_eps(data, min_pts=1, method='max', outpath=None, strict=None):
     # print(eps, value_normalized)
 
     if outpath:
+        # normalized_x = utl.min_max_normalize_array(x_array)
         f1, ax = plt.subplots(figsize=(10, 10))
-        ax.plot(normalized_x, normalized_y)
-        ax.scatter(elbow_coord[0], elbow_coord[1])
-        ax.set_xlabel('Inverse number of Photons included - Normalized')
-        ax.set_ylabel('Distance to NN (min_pts = {}) - Normalized'.format(min_pts))
+        ax.plot(normalized_y, (1 - normalized_x/np.max(normalized_x))*100, color='slategrey')
+        ax.scatter(elbow_coord[1], (1 - elbow_coord[0]/np.max(normalized_x))*100, color='navy')
+        # plt.gca().invert_yaxis()
+        # plt.gca().invert_xaxis()
+        # ax.set_ylim(0, 100)
+        # ax.set_xlim(0,1)
+        ax.get_xaxis().set_tick_params(which='both', direction='in', labelsize=16)
+        ax.get_yaxis().set_tick_params(which='both', direction='in', labelsize=16)
+        ax.set_ylabel('% of photons included', fontsize=22)
+        ax.set_xlabel('Distance to the {}th NN - (m) Normalized'.format(min_pts), fontsize=22)
         plt.savefig(outpath)
 
     return eps
